@@ -1,7 +1,7 @@
 body {
     color: black;
-    margin: 25%;
-    margin-top: 10%;
+    margin: 5%;
+    margin-top: 5%;
  }
 
  a {
@@ -17,6 +17,9 @@ a:hover {
     color: #0366d6;
     text-decoration: underline;
 }
+
+
+
 
 #container {
     width: 450px;
