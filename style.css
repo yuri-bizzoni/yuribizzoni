@@ -3,4 +3,34 @@ body {
     margin: 25%;
     margin-top: 10%;
  }
+
+ a {
+    color: #0366d6;
+    text-decoration: none;
+}
+
+a:visited {
+    color: #0366d6;
+}
+
+a:hover {
+    color: #0366d6;
+    text-decoration: underline;
+}
+
+#container {
+    width: 450px;
+    margin: 0 auto;
+}
+
+#sidebar {
+    float: right;
+    width: 200px;
+    background: #dff;
+}
+
+#content {
+    overflow: hidden;
+    background: #fdd;
+}
  
