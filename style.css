@@ -32,6 +32,13 @@ a:hover {
     background: #dff;
     padding: 5%;
     margin: 5%;
+    clear: right;
+}
+
+#container:after {
+    content: "";
+    display: table;
+    clear: right;
 }
 
 #content {
