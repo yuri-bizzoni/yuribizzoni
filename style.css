@@ -22,8 +22,10 @@ a:hover {
 
 
 #container {
-    width: 450px;
+    width: 55%;
     margin: 0 auto;
+    padding: 5%;
+    margin: 5%;
 }
 
 #sidebar {
