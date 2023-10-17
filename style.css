@@ -23,7 +23,6 @@ a:hover {
 
 #container {
     width: 55%;
-    margin: 0 auto;
     padding: 5%;
     margin: 5%;
 }
@@ -39,7 +38,6 @@ a:hover {
 
 #content {
     overflow: hidden;
-    background: #fdd;
     padding: 5%;
     margin: 5%;
 }
