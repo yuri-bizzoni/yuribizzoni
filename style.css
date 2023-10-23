@@ -26,7 +26,7 @@ a:hover {
     text-decoration: underline;
 }
 
-.black-link {
+a.black-link {
     color: black;
     text-decoration: none; /* removes the underline by default */
   }
