@@ -7,6 +7,10 @@ body {
     font-size: small;
  }
 
+#content h2 {
+    margin-bottom: 10px; /* adjusting margin after h2 */
+}
+
  /* Links */
 a {
     color: #0366d6;
