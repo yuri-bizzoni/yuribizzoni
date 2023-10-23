@@ -7,7 +7,8 @@ body {
     font-size: small;
  }
 
- a {
+ /* Links */
+a {
     color: #0366d6;
     text-decoration: none;
 }
@@ -21,9 +22,13 @@ a:hover {
     text-decoration: underline;
 }
 
+/* Images */
+img {
+    border-radius: 50%;
+  }
 
 
-
+/* Custom containers */
 #container {
     width: 75%;
     padding: 5%;
