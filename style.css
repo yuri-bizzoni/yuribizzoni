@@ -23,8 +23,8 @@ a:hover {
 }
 
 /* Images */
-img {
-    border-radius: 50%;
+img.rounded-corners {
+    border-radius: 0 50% 50% 50%;
   }
 
 
