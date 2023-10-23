@@ -61,15 +61,14 @@ img.rounded-corners {
     margin-left: 10%;
 }
 
-#curve {
-    width: 200px; /* Adjust the width to change the curvature */
-    height: 200px; /* Adjust the height to change the curvature */
-    background-color: transparent; /* Set the background to transparent */
-    position: absolute;
-    top: 50%; /* Position in the vertical center of the page */
-    left: 50%; /* Position in the horizontal center of the page */
-    border-radius: 0 100% 100% 0 / 50%; /* Create a quarter circle effect */
-    transform: translate(-50%, -50%); /* Center the element */
-    border: 2px solid #000; /* Add a border for the curve */
+.curve {
+    width: 60%; /* Adjust the width as needed */
+    height: 50vw; /* 50% of the viewport height; adjust as needed */
+    background-color: transparent;
+    border-radius: 0 100% 100% 0 / 100%;
+    border: 2px solid #000;
+    text-align: center;
+    line-height: 50vw; /* Center the text vertically */
+    position: relative;
 }
  
