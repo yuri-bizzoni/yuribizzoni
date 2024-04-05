@@ -61,6 +61,13 @@ img.rounded-corners {
     margin-left: 10%;
 }
 
+#content_breaker {
+    overflow: hidden;
+    padding: 5%;
+    margin: 1%;
+    margin-left: 10%;
+}
+
 .curve {
     width: 60%; /* Adjust the width as needed */
     height: 50vw; /* 50% of the viewport height; adjust as needed */
