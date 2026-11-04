@@ -1,0 +1,10 @@
+# Parole funzionali italiane (lista breve, fatta a mano per il corso: modificatela!)
+a ad al allo ai agli all alla alle col coi con da dal dallo dai dagli dall dalla dalle de del dello dei degli dell della delle di in nel nello nei negli nell nella nelle su sul sullo sui sugli sull sulla sulle per tra fra pel pe
+il lo la i gli le l un uno una un'
+e ed o od ma se che chi cui non né ne ci vi si mi ti lo li la le gli
+io tu lui lei egli ella esso essa noi voi loro essi esse me te sé
+mio mia miei mie tuo tua tuoi tue suo sua suoi sue nostro nostra nostri nostre vostro vostra vostri vostre
+questo questa questi queste quello quella quelli quelle quel quei quegli
+è era erano sono sia fu furon furono essere stato stata stati ha hanno ho hai aveva avea avevano avere aver avuto ebbe
+come quando dove più meno anche ancora già poi così tanto tutto tutta tutti tutte ogni altro altra altri altre
+pure perché perchè però mentre dunque quindi anzi sì no qui là lì qua allora sempre mai molto poco
