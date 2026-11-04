@@ -1,80 +1,99 @@
+/* Yuri Bizzoni — personal site. One stylesheet, no frameworks. */
+:root {
+  --ink: #2B2D42;
+  --muted: #5E6175;
+  --accent: #137A6F;        /* teal: links */
+  --accent-strong: #0E5F56;
+  --sun: #FFC845;           /* the warm highlight */
+  --sun-soft: #FFF3CC;
+  --line: #E6E2D8;
+  --bg: #FFFFFF;
+  --card: #FAFAF7;
+  --maxw: 780px;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ink: #ECEDF3; --muted: #A9ACBD; --accent: #5FD3C3; --accent-strong: #8DE3D7;
+    --sun: #FFC845; --sun-soft: #3A3420; --line: #34364A; --bg: #17181F; --card: #1F2029;
+  }
+}
+:root[data-theme="dark"] {
+  --ink: #ECEDF3; --muted: #A9ACBD; --accent: #5FD3C3; --accent-strong: #8DE3D7;
+  --sun: #FFC845; --sun-soft: #3A3420; --line: #34364A; --bg: #17181F; --card: #1F2029;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
 body {
-    color: black;
-    margin: 5%;
-    margin-top: 5%;
-    width: 90%;
-    font-family: 'Times New Roman', Times, serif;
-    font-size: small;
- }
-
-#content h2 {
-    margin-bottom: 10px; /* adjusting margin after h2 */
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
+h1, h2, h3, .brand { font-family: Georgia, Cambria, "Times New Roman", serif; line-height: 1.2; }
+h1 { font-size: clamp(32px, 6vw, 44px); margin: 0 0 8px; }
+h2 { font-size: 26px; margin: 40px 0 12px; }
+h3 { font-size: 20px; margin: 28px 0 8px; }
+p { margin: 10px 0; }
+a { color: var(--accent); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:hover { color: var(--accent-strong); }
+img { max-width: 100%; height: auto; }
 
- /* Links */
-a {
-    color: #0366d6;
-    text-decoration: none;
+.wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 16px; }
+
+/* Header */
+.site-header { border-bottom: 1px solid var(--line); }
+.site-header .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding-top: 14px; padding-bottom: 14px; }
+.brand { font-size: 22px; font-weight: 700; color: var(--ink); text-decoration: none; }
+.brand:hover { color: var(--ink); }
+nav ul { list-style: none; display: flex; gap: 4px 18px; flex-wrap: wrap; margin: 0; padding: 0; }
+nav a { color: var(--muted); text-decoration: none; font-size: 16px; padding: 4px 0; border-bottom: 2px solid transparent; }
+nav a:hover { color: var(--ink); }
+nav a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--sun); }
+
+main { padding: 36px 0 24px; }
+
+/* Home */
+.hero { display: grid; grid-template-columns: 168px 1fr; gap: 28px; align-items: center; }
+.hero img { width: 168px; height: 168px; object-fit: cover; border-radius: 50%; box-shadow: 0 0 0 6px var(--sun-soft); }
+.tagline { color: var(--muted); font-size: 19px; margin: 0; }
+@media (max-width: 560px) {
+  .hero { grid-template-columns: 1fr; text-align: left; }
+  .hero img { width: 128px; height: 128px; }
 }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 12px 0 0; list-style: none; }
+.chips li { background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; font-size: 15px; }
 
-a:visited {
-    color: #0366d6;
-}
+.now { background: var(--sun-soft); border-radius: 16px; padding: 18px 20px; margin: 28px 0; }
+.now strong { font-family: Georgia, Cambria, serif; font-size: 19px; }
+.now p { margin: 6px 0; }
 
-a:hover {
-    color: #0366d6;
-    text-decoration: underline;
-}
+/* Lists of publications / items */
+.pubs { list-style: none; padding: 0; margin: 0; }
+.pubs li { padding: 14px 0; border-bottom: 1px solid var(--line); }
+.pubs li:last-child { border-bottom: 0; }
+.pub-title { font-weight: 600; }
+.pub-authors, .pub-venue { color: var(--muted); font-size: 15.5px; }
+.pub-authors b { color: var(--ink); font-weight: 600; }
+.pub-links { margin-top: 4px; font-size: 15px; display: flex; gap: 14px; flex-wrap: wrap; }
+.badge { display: inline-block; font-size: 12.5px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; background: var(--sun); color: #2B2D42; border-radius: 6px; padding: 1px 7px; margin-right: 6px; vertical-align: 2px; }
+.year-nav { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0 0; padding: 0; list-style: none; font-size: 15px; }
 
-a.black-link {
-    color: black;
-    text-decoration: none; /* removes the underline by default */
-  }
+/* Cards (projects, teaching) */
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 20px; margin: 18px 0; }
+.card h3 { margin-top: 0; }
+.card ul { margin: 8px 0 0; padding-left: 20px; }
+figure { margin: 18px 0; }
+figure img { border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+figcaption { color: var(--muted); font-size: 15px; margin-top: 8px; }
 
-/* Images */
-img.rounded-corners {
-    /*border-radius: 0 50% 50% 50%;*/
-    border-radius: 50%;
-  }
+.button { display: inline-block; background: var(--ink); color: var(--bg); text-decoration: none; font-weight: 600; border-radius: 10px; padding: 9px 14px; margin: 6px 8px 0 0; }
+.button:hover { color: var(--bg); opacity: .9; }
+.button.light { background: var(--sun); color: #2B2D42; }
 
+.contact-list { list-style: none; padding: 0; }
+.contact-list li { padding: 10px 0; border-bottom: 1px solid var(--line); display: flex; gap: 16px; flex-wrap: wrap; }
+.contact-list span { color: var(--muted); min-width: 110px; }
 
-/* Custom containers */
-#container {
-    width: 75%;
-    padding: 5%;
-    margin: 5%;
-}
-
-#sidebar {
-    float: right;
-    width: 35%;
-    background: #F5F5F5;
-    padding: 5%;
-    margin: 5%;
-    clear: right;
-}
-
-#content {
-    overflow: hidden;
-    padding: 5%;
-    margin: 5%;
-    margin-left: 10%;
-}
-
-#content_breaker {
-    overflow: hidden;
-    padding: 5%;
-    margin: 1%;
-    margin-left: 10%;
-}
-
-.curve {
-    width: 60%; /* Adjust the width as needed */
-    height: 50vw; /* 50% of the viewport height; adjust as needed */
-    background-color: transparent;
-    border-radius:  50% 0 0 0 / 50% 0 0 0;
-    border: 2px solid #000;
-    text-align: center;
-    line-height: 50vw; /* Center the text vertically */
-    position: relative;
-}
+footer { border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; padding: 20px 0 40px; margin-top: 32px; }
