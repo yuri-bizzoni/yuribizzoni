@@ -1,0 +1,2 @@
+# Happiness needs Python 3.10+ and the Anthropic SDK; everything else is the standard library.
+anthropic>=2.5,<3
