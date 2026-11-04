@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sei tu l'albero di decisione</title>
+<meta name="description" content="Un piccolo gioco per la lezione 2 di Machine Learning for the Humanities: Collodi o Manzoni? Costruisci la tua regola e trova il capitolo più felice di Pinocchio.">
+<style>
+  :root {
+    --ink: #2B2D42; --muted: #5E6175; --sun: #FFC845; --butter: #FFF3CC; --tangerine: #FF8A3D;
+    --teal: #1B998B; --coral: #FF5D73; --bg: #FFFFFF; --card: #FFF8E5; --line: #E6E2D8;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--ink); font: 17px/1.5 "Calibri", "Segoe UI", system-ui, -apple-system, sans-serif; }
+  h1, h2, .serif { font-family: "Cambria", Georgia, "Times New Roman", serif; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 16px 16px 48px; }
+  header.hero { background: var(--sun); padding: 28px 16px 24px; }
+  header.hero .wrap { padding-bottom: 0; }
+  .kicker { font-weight: 700; font-size: 14px; letter-spacing: .02em; }
+  h1 { font-size: clamp(30px, 8vw, 46px); line-height: 1.1; margin: 8px 0; }
+  h2 { font-size: 26px; margin: 0 0 8px; }
+  p { margin: 8px 0; }
+  .steps { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+  .step { background: #fff; border-radius: 999px; padding: 4px 12px; font-size: 14px; font-weight: 700; opacity: .55; }
+  .step.on { opacity: 1; background: var(--ink); color: #fff; }
+  section { display: none; }
+  section.on { display: block; }
+  .card { background: var(--card); border-radius: 18px; padding: 18px; margin: 16px 0; box-shadow: 0 2px 8px rgba(43,45,66,.08); }
+  .quote { font-family: "Cambria", Georgia, serif; font-size: 19px; font-style: italic; min-height: 7em; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  button { font: inherit; font-weight: 700; border: 0; border-radius: 14px; padding: 14px 18px; cursor: pointer; color: var(--ink); }
+  button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+  .big { flex: 1 1 140px; font-size: 19px; min-height: 56px; }
+  .collodi { background: var(--tangerine); }
+  .manzoni { background: var(--teal); color: #fff; }
+  .primary { background: var(--ink); color: #fff; }
+  .ghost { background: var(--butter); }
+  button:disabled { opacity: .45; cursor: default; }
+  .opt:disabled { opacity: 1; }
+  .feedback { min-height: 3.2em; margin-top: 12px; font-weight: 700; }
+  .ok { color: #137a6f; } .ko { color: #c8364b; }
+  .progress { height: 10px; background: var(--butter); border-radius: 99px; overflow: hidden; margin: 8px 0 0; }
+  .progress > div { height: 100%; background: var(--tangerine); width: 0; transition: width .3s; }
+  .score { font-family: "Cambria", Georgia, serif; font-size: 64px; font-weight: 700; line-height: 1; color: var(--tangerine); }
+  .vs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .vs .card { margin: 0; text-align: center; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+  .chip { background: #fff; border: 2px solid var(--line); border-radius: 999px; padding: 8px 14px; font-weight: 700; font-size: 15px; }
+  .chip[aria-pressed="true"] { background: var(--sun); border-color: var(--sun); }
+  input[type=range] { width: 100%; accent-color: var(--tangerine); height: 32px; }
+  .rule { font-size: 18px; margin: 6px 0 10px; }
+  .rule select { font: inherit; font-weight: 700; padding: 6px 8px; border-radius: 10px; border: 2px solid var(--line); background: #fff; color: var(--ink); }
+  .acc { font-family: "Cambria", Georgia, serif; font-size: 44px; font-weight: 700; color: var(--teal); line-height: 1.1; }
+  svg { width: 100%; height: auto; display: block; }
+  .legend { display: flex; gap: 16px; font-size: 14px; color: var(--muted); }
+  .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+  .opts { display: grid; gap: 10px; }
+  .opt { text-align: left; background: #fff; border: 2px solid var(--line); font-weight: 400; }
+  .opt b { display: block; }
+  .opt.right { border-color: var(--teal); background: #E5F6F3; }
+  .opt.wrong { border-color: var(--coral); background: #FFE9EC; }
+  .moral { background: var(--sun); border-radius: 18px; padding: 18px; font-size: 19px; font-weight: 700; }
+  footer { color: var(--muted); font-size: 13px; margin-top: 32px; }
+  .hint { color: var(--muted); font-size: 15px; }
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <div class="kicker">Machine Learning for the Humanities · Lezione 2</div>
+    <h1>Sei tu l'albero di decisione</h1>
+    <p>Tre prove per capire come una macchina impara a distinguere gli autori, e perché contare la felicità è più difficile di quanto sembri.</p>
+    <div class="steps" aria-label="Avanzamento">
+      <span class="step on" id="s1">1 · Chi ha scritto?</span>
+      <span class="step" id="s2">2 · La tua regola</span>
+      <span class="step" id="s3">3 · La felicità</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- PROVA 1 -->
+  <section id="p1" class="on" aria-labelledby="t1">
+    <h2 id="t1">Prova 1 · Collodi o Manzoni?</h2>
+    <p class="hint">Dieci brani veri, senza nomi dei personaggi. Fidati del tuo orecchio.</p>
+    <div class="progress" aria-hidden="true"><div id="bar"></div></div>
+    <div class="card">
+      <div class="kicker" id="count">Brano 1 di 10</div>
+      <p class="quote" id="quote"></p>
+    </div>
+    <div class="row">
+      <button class="big collodi" id="bC">Collodi</button>
+      <button class="big manzoni" id="bM">Manzoni</button>
+    </div>
+    <div class="feedback" id="fb" aria-live="polite"></div>
+    <div class="row"><button class="primary" id="next1" hidden>Avanti</button></div>
+    <div id="end1" hidden>
+      <div class="vs">
+        <div class="card"><div class="kicker">Tu</div><div class="score" id="myScore"></div><div>brani su 10</div></div>
+        <div class="card"><div class="kicker">L'albero</div><div class="score" style="color:var(--teal)">9,9</div><div>su 10 (98,6% sul test)</div></div>
+      </div>
+      <p>L'albero usa <b>una sola domanda</b> per quasi tutti i brani. Sapresti trovarla? Prova a costruire tu la regola.</p>
+      <button class="primary" id="go2">Alla prova 2</button>
+    </div>
+  </section>
+
+  <!-- PROVA 2 -->
+  <section id="p2" aria-labelledby="t2">
+    <h2 id="t2">Prova 2 · Costruisci la tua regola</h2>
+    <p class="hint">Hai 240 brani di circa 200 parole (120 per autore). Scegli <b>una</b> misura e sposta la soglia: quanti brani classifica bene la tua regola?</p>
+    <div class="chips" role="group" aria-label="Scegli la misura" id="chips"></div>
+    <div class="rule">Se il valore è <b>sopra</b> la soglia, è
+      <select id="side" aria-label="Autore sopra la soglia"><option value="0">Collodi</option><option value="1">Manzoni</option></select>
+    </div>
+    <label for="thr" class="hint">Soglia: <b id="thrVal"></b></label>
+    <input type="range" id="thr" min="0" max="100" step="1" value="50">
+    <div class="card">
+      <svg id="plot" viewBox="0 0 640 190" role="img" aria-label="Distribuzione dei brani rispetto alla soglia"></svg>
+      <div class="legend"><span><span class="dot" style="background:var(--tangerine)"></span>Collodi</span><span><span class="dot" style="background:var(--teal)"></span>Manzoni</span></div>
+    </div>
+    <div class="vs">
+      <div class="card"><div class="kicker">La tua regola</div><div class="acc" id="acc"></div><div id="accN" class="hint"></div></div>
+      <div class="card"><div class="kicker">A caso</div><div class="acc" style="color:var(--muted)">50%</div><div class="hint">due autori, stessi brani</div></div>
+    </div>
+    <div class="feedback" id="fb2" aria-live="polite"></div>
+    <div class="row"><button class="ghost" id="best">Mostrami la soglia migliore</button><button class="primary" id="go3">Alla prova 3</button></div>
+  </section>
+
+  <!-- PROVA 3 -->
+  <section id="p3" aria-labelledby="t3">
+    <h2 id="t3">Prova 3 · La trappola della felicità</h2>
+    <p>Abbiamo contato le parole felici (<i>felice, gioia, allegria, contento, lieto, beato…</i>) in ogni capitolo di <i>Pinocchio</i>.
+      <b>Quale capitolo ne ha di più</b> (ogni 1000 parole)?</p>
+    <div class="opts" id="opts"></div>
+    <div id="end3" hidden>
+      <div class="card">
+        <svg id="chaps" viewBox="0 0 640 200" role="img" aria-label="Parole felici ogni 1000 in ciascuno dei 36 capitoli"></svg>
+        <p class="hint">Parole felici ogni 1000, capitolo per capitolo. In rosso il capitolo XXXI.</p>
+      </div>
+      <div class="moral">Il capitolo più "felice" è quello del Paese dei balocchi, quando a Pinocchio spuntano le orecchie d'asino.
+        I numeri ci dicono <u>dove guardare</u>, non <u>che cosa significa</u>.</div>
+      <div class="card">
+        <h2>Che cosa portiamo a casa</h2>
+        <p>1. Un testo diventa numeri: frequenze e misure di stile.</p>
+        <p>2. Un albero di decisione è una serie di domande sì/no che puoi leggere.</p>
+        <p>3. La regola migliore qui è "c'è il trattino di dialogo?": vera per <b>questa edizione</b> dei Promessi sposi, non per Manzoni. Un risultato perfetto può essere giusto per la ragione sbagliata.</p>
+      </div>
+      <button class="ghost" id="again">Ricomincia</button>
+    </div>
+  </section>
+
+  <footer>Testi di pubblico dominio da Project Gutenberg. Il gioco gira tutto nel tuo browser: niente account, niente dati inviati.
+    · Machine Learning for the Humanities, Università di Roma Tor Vergata</footer>
+</main>
+
+<script>
+const DATI = {"brani": [{"autore": "Collodi", "testo": "Finalmente gli parve di esser giunto in un luogo sicuro: e dando un'occhiata alla spiaggia, vide sugli scogli una specie di grotta, dalla quale usciva un lunghissimo pennacchio di fumo. — In quella grotta — disse allora fra sè — ci deve essere del fuoco. Tanto meglio!"}, {"autore": "Manzoni", "testo": "Intanto io vo dal vicario delle monache, a fissare un giorno per l'esame.» Detto fatto, il principe uscì, e andò veramente (che non fu piccola degnazione) dal detto vicario; e concertarono che verrebbe di lì a due giorni."}, {"autore": "Manzoni", "testo": "Intanto i delegati presero in fretta e in furia quelle misure che parver loro migliori; e se ne tornarono, con la trista persuasione che non sarebbero bastate a rimediare e a fermare un male già tanto avanzato e diffuso."}, {"autore": "Collodi", "testo": "O Fatina mia!... O Fatina mia!... ditemi che siete voi, proprio voi!... Non mi fate più piangere! Se sapeste! Ho pianto tanto, ho patito tanto!... —"}, {"autore": "Manzoni", "testo": "Ma se, in tutte le scienze suddette, don Ferrante poteva dirsi addottrinato, una ce n'era in cui meritava e godeva il titolo di professore: la scienza cavalleresca. Non solo ne ragionava con vero possesso, ma pregato frequentemente d'intervenire in affari d'onore, dava sempre qualche decisione."}, {"autore": "Manzoni", "testo": "Ora, trattandosi di cose vecchie, nessuno gli dà fastidio; e, come le ho detto, lui pensa d'andarsene fuor di stato; ma, col tempo, o tornando qui, o altro, non si sa mai, lei m'insegna che è sempre meglio non esser su que' libri."}, {"autore": "Collodi", "testo": "— Sarebbe ora che diventassi anch'io un uomo.... — E lo diventerai, se saprai meritarlo.... — Davvero? E che posso fare per meritarmelo? — Una cosa facilissima: avvezzarti a essere un ragazzino perbene. — O che forse non lo sono? — Tutt'altro! i ragazzi perbene sono ubbidienti, e tu invece...."}, {"autore": "Collodi", "testo": "— Se il battente è sparito, io seguiterò a bussare a furia di calci. — E tiratosi un poco indietro, lasciò andare una solennissima pedata nell'uscio della casa."}, {"autore": "Collodi", "testo": "— Preciso; e tu? — Io sono il Tonno, il tuo compagno di prigionia in corpo al Pesce-cane. — E come hai fatto a scappare? — Ho imitato il tuo esempio. Tu sei quello che mi hai insegnato la strada, e dopo te sono fuggito anch'io."}, {"autore": "Manzoni", "testo": "Avete preso il solo partito onorevole, conveniente, che vi rimanesse; ma perchè l'avete preso di buona voglia, e con buona maniera, tocca a me a farvelo riuscir gradito in tutto e per tutto: tocca a me a farne tornare tutto il vantaggio e tutto il merito sopra di voi."}], "punti": [[0, 3.82, 11.9, 2.29, 1.53, 0.0], [0, 8.6, 10.9, 2.15, 0.54, 0.0], [0, 1.44, 14.9, 0.0, 0.48, 4.78], [0, 3.05, 13.1, 1.02, 1.52, 0.0], [0, 4.12, 12.9, 3.61, 0.52, 0.0], [0, 0.86, 25.8, 0.86, 0.86, 0.0], [0, 4.13, 19.8, 0.46, 0.46, 9.17], [0, 2.64, 22.7, 0.0, 0.44, 0.0], [0, 2.41, 17.8, 0.4, 0.8, 0.0], [0, 1.39, 16.6, 3.24, 0.0, 0.0], [0, 4.41, 14.6, 0.98, 0.49, 0.0], [0, 8.53, 11.1, 3.32, 0.47, 4.74], [0, 5.24, 17.5, 0.48, 0.48, 0.0], [0, 3.41, 22.8, 0.49, 0.0, 9.76], [0, 9.62, 11.6, 0.96, 0.96, 0.0], [0, 1.8, 18.5, 0.9, 0.45, 0.0], [0, 6.44, 11.9, 0.5, 0.5, 0.0], [0, 9.85, 11.3, 1.48, 0.0, 0.0], [0, 0.47, 19.5, 1.4, 0.47, 0.0], [0, 2.99, 15.6, 0.85, 0.43, 0.0], [0, 5.88, 8.8, 3.17, 0.45, 9.05], [0, 6.83, 12.1, 4.88, 0.0, 0.0], [0, 5.18, 13.8, 2.07, 0.52, 0.0], [0, 5.1, 11.6, 1.96, 0.0, 0.0], [0, 8.29, 11.4, 1.55, 0.52, 0.0], [0, 12.5, 10.8, 2.72, 0.54, 5.43], [0, 9.52, 8.6, 1.06, 0.0, 0.0], [0, 2.38, 13.3, 1.98, 0.79, 0.0], [0, 2.93, 18.6, 1.46, 0.0, 0.0], [0, 5.91, 12.7, 3.94, 0.49, 0.0], [0, 0.0, 22.8, 0.0, 0.0, 0.0], [0, 1.81, 13.8, 1.36, 0.45, 0.0], [0, 5.53, 14.2, 1.01, 0.5, 0.0], [0, 3.47, 22.4, 0.0, 0.99, 0.0], [0, 2.67, 20.5, 0.89, 0.0, 0.0], [0, 1.74, 32.9, 0.43, 0.43, 0.0], [0, 8.51, 14.5, 1.6, 1.06, 0.0], [0, 5.15, 17.6, 0.0, 0.52, 0.0], [0, 7.41, 10.8, 2.31, 0.46, 0.0], [0, 5.59, 20.3, 1.32, 0.99, 0.0], [0, 7.33, 14.7, 1.05, 0.52, 0.0], [0, 7.88, 10.7, 1.97, 0.0, 4.93], [0, 7.37, 9.5, 1.58, 0.0, 0.0], [0, 1.93, 34.5, 0.0, 1.45, 0.0], [0, 2.97, 16.8, 0.5, 0.5, 4.95], [0, 3.7, 16.6, 0.0, 0.46, 0.0], [0, 3.72, 16.5, 1.4, 0.0, 0.0], [0, 3.27, 14.7, 1.36, 0.82, 2.72], [0, 1.75, 20.7, 0.44, 0.44, 4.39], [0, 2.44, 17.1, 0.49, 0.0, 0.0], [0, 7.11, 13.2, 1.9, 0.0, 0.0], [0, 2.76, 21.7, 0.0, 0.0, 0.0], [0, 9.72, 8.0, 1.85, 0.0, 4.63], [0, 5.0, 18.2, 1.5, 1.0, 10.0], [0, 3.86, 18.5, 3.09, 0.77, 0.0], [0, 0.0, 8.6, 4.76, 0.0, 0.0], [0, 7.02, 9.5, 1.75, 0.44, 0.0], [0, 6.44, 10.1, 2.48, 0.99, 4.95], [0, 3.69, 19.7, 1.84, 0.46, 0.0], [0, 3.15, 24.7, 0.9, 0.45, 0.0], [0, 2.56, 23.4, 1.28, 1.28, 0.0], [0, 8.1, 13.1, 0.48, 0.0, 0.0], [0, 4.25, 17.7, 0.94, 0.47, 0.0], [0, 6.93, 13.5, 1.98, 0.0, 0.0], [0, 3.86, 7.4, 4.83, 0.0, 0.0], [0, 4.02, 12.4, 1.01, 0.5, 0.0], [0, 11.83, 6.4, 1.61, 0.0, 0.0], [0, 7.77, 12.1, 1.04, 0.0, 15.54], [0, 2.39, 16.1, 2.39, 0.96, 0.0], [0, 6.99, 10.4, 2.62, 0.0, 0.0], [0, 4.92, 12.0, 3.79, 0.76, 0.0], [0, 1.3, 16.4, 3.48, 0.43, 0.0], [0, 10.95, 8.0, 2.99, 0.0, 0.0], [0, 3.93, 16.4, 0.44, 1.31, 0.0], [0, 8.29, 9.9, 3.69, 0.92, 0.0], [0, 4.5, 13.3, 3.0, 0.0, 5.0], [0, 12.92, 7.4, 2.25, 0.0, 5.62], [0, 3.91, 18.3, 0.39, 1.17, 0.0], [0, 2.97, 14.4, 1.98, 0.5, 0.0], [0, 5.98, 16.7, 0.85, 0.85, 0.0], [0, 5.1, 10.9, 1.53, 0.0, 0.0], [0, 4.62, 13.0, 1.03, 0.51, 0.0], [0, 5.7, 8.0, 2.59, 0.52, 0.0], [0, 10.05, 9.0, 3.7, 0.53, 0.0], [0, 1.32, 16.2, 1.76, 0.0, 0.0], [0, 9.62, 11.6, 3.85, 0.96, 14.42], [0, 0.85, 21.3, 0.43, 0.0, 0.0], [0, 3.35, 16.1, 3.35, 0.48, 0.0], [0, 2.21, 21.1, 0.95, 0.32, 6.31], [0, 2.83, 12.5, 2.83, 0.0, 14.15], [0, 6.25, 10.1, 3.12, 0.52, 5.21], [0, 6.93, 11.9, 1.98, 0.0, 0.0], [0, 10.31, 6.8, 4.48, 0.0, 0.0], [0, 1.61, 20.8, 1.2, 0.4, 0.0], [0, 6.09, 12.1, 3.04, 0.87, 0.0], [0, 3.41, 14.6, 2.44, 0.49, 0.0], [0, 4.69, 14.2, 2.82, 0.0, 0.0], [0, 3.05, 16.4, 3.05, 0.0, 5.08], [0, 3.26, 12.6, 1.4, 0.0, 0.0], [0, 0.86, 23.3, 0.43, 0.86, 0.0], [0, 3.26, 14.0, 2.93, 0.0, 0.0], [0, 4.48, 18.3, 0.5, 0.0, 0.0], [0, 2.82, 26.6, 0.0, 1.41, 9.39], [0, 0.0, 19.7, 0.92, 0.46, 0.0], [0, 9.43, 8.2, 2.36, 0.47, 0.0], [0, 0.47, 21.3, 1.88, 0.94, 9.39], [0, 3.87, 14.9, 0.7, 0.0, 0.0], [0, 7.25, 12.2, 1.45, 0.0, 0.0], [0, 1.92, 29.7, 0.0, 0.48, 0.0], [0, 4.13, 13.6, 0.46, 0.0, 0.0], [0, 6.03, 11.7, 1.01, 0.0, 0.0], [0, 6.42, 10.4, 2.75, 1.38, 0.0], [0, 2.02, 19.0, 0.0, 0.0, 0.0], [0, 12.85, 7.2, 6.15, 0.56, 0.0], [0, 8.7, 10.9, 0.48, 1.45, 0.0], [0, 6.46, 10.1, 3.04, 0.0, 0.0], [0, 3.55, 17.9, 0.0, 0.51, 10.15], [0, 4.4, 7.6, 4.4, 0.4, 0.0], [0, 0.0, 116.5, 0.0, 0.86, 0.0], [0, 0.0, 105.0, 0.0, 1.43, 0.0], [1, 0.0, 79.0, 0.0, 1.27, 0.0], [1, 0.0, 29.2, 0.0, 0.0, 0.0], [1, 0.0, 11.1, 0.86, 0.86, 0.0], [1, 0.0, 36.0, 0.0, 1.23, 0.0], [1, 0.0, 9.6, 0.42, 2.09, 4.18], [1, 0.0, 12.2, 1.37, 2.74, 0.0], [1, 0.0, 20.6, 0.44, 0.88, 0.0], [1, 0.0, 32.4, 0.0, 1.19, 2.38], [1, 0.0, 41.9, 0.0, 1.79, 17.91], [1, 0.0, 34.2, 0.0, 1.35, 0.0], [1, 0.0, 18.1, 2.15, 0.62, 0.0], [1, 0.0, 37.0, 0.0, 1.35, 0.0], [1, 0.0, 30.2, 0.0, 1.81, 0.0], [1, 0.0, 28.4, 0.0, 2.34, 0.0], [1, 0.0, 14.4, 1.85, 1.85, 0.0], [1, 0.0, 15.1, 1.33, 1.33, 0.0], [1, 0.0, 14.2, 0.7, 2.46, 0.0], [1, 0.0, 11.5, 0.36, 0.0, 0.0], [1, 0.0, 9.1, 1.9, 0.48, 14.29], [1, 0.0, 10.4, 0.96, 0.96, 4.78], [1, 0.0, 36.7, 0.25, 1.49, 0.0], [1, 0.0, 11.2, 1.28, 1.7, 0.0], [1, 0.0, 26.6, 0.34, 1.02, 3.41], [1, 0.0, 26.6, 0.66, 1.99, 0.0], [1, 0.0, 21.5, 0.0, 2.33, 0.0], [1, 0.0, 19.9, 0.84, 1.26, 0.0], [1, 0.0, 12.1, 1.5, 1.5, 0.0], [1, 0.0, 30.9, 0.0, 0.57, 0.0], [1, 0.0, 30.6, 0.0, 0.36, 3.64], [1, 0.0, 17.8, 0.93, 1.87, 4.67], [1, 0.0, 15.1, 0.3, 0.9, 6.02], [1, 0.0, 38.7, 0.0, 1.29, 8.62], [1, 0.0, 35.4, 0.0, 1.61, 4.03], [1, 0.0, 19.1, 1.35, 1.69, 0.0], [1, 0.0, 47.8, 0.0, 1.05, 0.0], [1, 0.0, 33.6, 0.0, 2.04, 0.0], [1, 0.0, 19.3, 1.64, 3.28, 0.0], [1, 0.0, 25.7, 1.14, 2.06, 0.0], [1, 0.0, 22.0, 1.52, 1.52, 0.0], [1, 0.0, 14.5, 3.69, 1.38, 0.0], [1, 0.0, 17.6, 0.95, 2.37, 0.0], [1, 0.0, 43.4, 0.0, 2.81, 0.0], [1, 0.0, 15.5, 1.29, 2.15, 0.0], [1, 0.0, 18.6, 0.0, 1.35, 0.0], [1, 0.0, 12.8, 3.48, 1.3, 0.0], [1, 0.0, 14.1, 0.65, 2.58, 0.0], [1, 0.0, 42.7, 0.0, 2.34, 0.0], [1, 0.0, 17.1, 0.73, 1.1, 0.0], [1, 0.0, 19.1, 0.98, 2.29, 0.0], [1, 0.0, 23.3, 0.48, 4.29, 0.0], [1, 0.0, 26.3, 0.56, 1.97, 0.0], [1, 0.0, 16.6, 0.0, 3.02, 0.0], [1, 0.0, 34.8, 0.0, 1.44, 0.0], [1, 0.0, 13.2, 1.65, 3.63, 0.0], [1, 0.0, 37.6, 0.38, 2.28, 0.0], [1, 0.0, 28.1, 0.21, 1.46, 0.0], [1, 0.0, 12.9, 0.43, 1.29, 0.0], [1, 0.0, 37.2, 0.0, 1.79, 0.0], [1, 0.0, 42.4, 0.0, 1.42, 0.0], [1, 0.0, 28.9, 0.69, 2.77, 0.0], [1, 0.0, 7.3, 4.68, 0.33, 0.0], [1, 0.0, 12.9, 1.66, 2.49, 13.85], [1, 0.0, 43.5, 0.0, 1.53, 0.0], [1, 0.0, 22.0, 1.65, 2.07, 16.53], [1, 0.0, 24.9, 0.0, 0.8, 0.0], [1, 0.0, 15.1, 1.77, 0.88, 4.42], [1, 0.0, 19.1, 1.31, 1.97, 6.56], [1, 0.0, 21.8, 1.06, 2.47, 0.0], [1, 0.0, 38.3, 0.0, 1.04, 2.61], [1, 0.0, 36.3, 0.0, 2.75, 0.0], [1, 0.0, 27.6, 0.0, 2.84, 0.0], [1, 0.0, 26.6, 0.0, 0.94, 4.69], [1, 0.0, 13.7, 0.49, 1.95, 0.0], [1, 0.0, 17.1, 0.73, 1.82, 3.65], [1, 0.0, 14.9, 0.0, 0.89, 0.0], [1, 0.0, 22.9, 0.0, 1.25, 0.0], [1, 0.0, 71.4, 0.0, 2.24, 0.0], [1, 0.0, 44.8, 0.0, 0.45, 0.0], [1, 0.0, 44.4, 0.0, 1.35, 0.0], [1, 0.0, 53.2, 0.0, 2.26, 0.0], [1, 0.0, 15.2, 0.0, 1.32, 4.39], [1, 0.0, 14.2, 2.2, 4.41, 0.0], [1, 0.0, 14.5, 0.92, 1.38, 4.59], [1, 0.0, 14.4, 1.85, 2.78, 0.0], [1, 0.0, 14.2, 2.64, 1.76, 0.0], [1, 0.0, 54.8, 0.0, 1.37, 0.0], [1, 0.0, 27.9, 0.36, 1.43, 0.0], [1, 0.0, 46.6, 0.0, 1.53, 0.0], [1, 0.0, 27.9, 0.0, 0.0, 0.0], [1, 0.0, 43.8, 0.0, 0.38, 0.0], [1, 0.0, 57.8, 0.0, 1.44, 2.88], [1, 0.0, 32.5, 0.0, 0.92, 0.0], [1, 0.0, 24.2, 0.0, 2.17, 0.0], [1, 0.0, 42.8, 0.52, 2.6, 0.0], [1, 0.0, 35.9, 0.19, 3.71, 0.0], [1, 0.0, 16.6, 2.54, 1.59, 0.0], [1, 0.0, 19.5, 0.93, 0.93, 0.0], [1, 0.0, 15.0, 2.59, 2.59, 0.0], [1, 0.0, 31.4, 0.46, 1.82, 0.0], [1, 0.0, 45.8, 0.87, 1.53, 0.0], [1, 0.0, 50.7, 0.0, 2.3, 0.0], [1, 0.0, 23.5, 1.7, 2.55, 0.0], [1, 0.0, 19.4, 0.43, 2.15, 0.0], [1, 0.0, 28.7, 0.0, 1.74, 0.0], [1, 0.0, 18.9, 0.0, 3.85, 0.0], [1, 0.0, 15.0, 1.52, 2.13, 6.08], [1, 0.0, 23.2, 0.0, 1.85, 0.0], [1, 0.0, 26.5, 0.0, 3.3, 4.72], [1, 0.0, 35.6, 0.0, 2.81, 4.68], [1, 0.0, 14.4, 0.41, 0.41, 0.0], [1, 0.0, 12.9, 1.22, 3.25, 0.0], [1, 0.0, 18.4, 0.39, 1.95, 0.0], [1, 0.0, 20.7, 0.74, 1.49, 0.0], [1, 0.0, 12.4, 3.31, 2.94, 0.0], [1, 0.0, 26.9, 0.0, 4.13, 0.0], [1, 0.0, 17.0, 1.12, 2.23, 0.0], [1, 0.0, 30.7, 0.0, 1.81, 0.0], [1, 0.0, 20.2, 0.0, 2.67, 0.0], [1, 0.0, 24.8, 0.0, 2.36, 0.0], [1, 0.0, 15.0, 0.63, 1.27, 3.16]], "capitoli": [{"n": 1, "titolo": "Come andò che Maestro Ciliegia, falegname trovò un pezzo di legno che piangeva e rideva come un bambino.", "tasso": 1.54}, {"n": 2, "titolo": "Maestro Ciliegia regala il pezzo di legno al suo amico Geppetto, il quale lo prende per fabbricarsi un burattino maraviglioso, che sappia ballare, tirar di scherma e fare i salti mortali.", "tasso": 1.64}, {"n": 3, "titolo": "Geppetto, tornato a casa, comincia subito a fabbricarsi il burattino e gli mette il nome di Pinocchio. Prime monellerie del burattino.", "tasso": 0.98}, {"n": 4, "titolo": "La storia di Pinocchio col Grillo-parlante, dove si vede come i ragazzi cattivi hanno a noja di sentirsi correggere da chi ne sa più di loro.", "tasso": 3.42}, {"n": 5, "titolo": "Pinocchio ha fame e cerca un uovo per farsi una frittata; ma sul più bello, la frittata gli vola via dalla finestra.", "tasso": 3.16}, {"n": 6, "titolo": "Pinocchio si addormenta coi piedi sul caldano, e la mattina dopo si sveglia coi piedi tutti bruciati.", "tasso": 0.0}, {"n": 7, "titolo": "Geppetto torna a casa, e dà al burattino la colazione che il pover'uomo aveva portata per sè.", "tasso": 1.13}, {"n": 8, "titolo": "Geppetto rifà i piedi a Pinocchio, e vende la propria casacca per comprargli l'Abbecedario.", "tasso": 3.26}, {"n": 9, "titolo": "Pinocchio vende l'Abbecedario per andare a vedere il teatro dei burattini.", "tasso": 0.0}, {"n": 10, "titolo": "I burattini riconoscono il loro fratello Pinocchio e gli fanno una grandissima festa; ma sul più bello esce fuori il burattinaio Mangiafoco, e Pinocchio corre pericolo di fare una brutta fine.", "tasso": 0.0}, {"n": 11, "titolo": "Mangiafoco starnutisce e perdona a Pinocchio, il quale poi difende dalla morte il suo amico Arlecchino.", "tasso": 3.65}, {"n": 12, "titolo": "Il burattinaio Mangiafoco regala cinque monete d'oro a Pinocchio perchè le porti al suo babbo Geppetto: e Pinocchio, invece, si lascia abbindolare dalla Volpe e dal Gatto e se ne va con loro.", "tasso": 1.74}, {"n": 13, "titolo": "L'osteria del «Gambero Rosso.»", "tasso": 0.0}, {"n": 14, "titolo": "Pinocchio, per non aver dato retta ai buoni consigli del Grillo-parlante, s'imbatte negli assassini.", "tasso": 0.0}, {"n": 15, "titolo": "Gli assassini inseguono Pinocchio; e dopo averlo raggiunto lo impiccano a un ramo della Quercia grande.", "tasso": 0.0}, {"n": 16, "titolo": "La bella Bambina dai capelli turchini fa raccogliere il burattino: lo mette a letto, e chiama tre medici per sapere se sia vivo o morto.", "tasso": 0.0}, {"n": 17, "titolo": "Pinocchio mangia lo zucchero, ma non vuol purgarsi; però quando vede i becchini che vengono a portarlo via, allora si purga. Poi dice una bugia e per gastigo gli cresce il naso.", "tasso": 0.78}, {"n": 18, "titolo": "Pinocchio ritrova la Volpe e il Gatto, e va con loro a seminare le quattro monete nel Campo dei miracoli.", "tasso": 2.43}, {"n": 19, "titolo": "Pinocchio è derubato delle sue monete d'oro, e per gastigo si busca quattro mesi di prigione.", "tasso": 0.0}, {"n": 20, "titolo": "Liberato dalla prigione, si avvia per tornare a casa della Fata; ma lungo la strada trova un serpente orribile, e poi rimane preso alla tagliuola.", "tasso": 3.83}, {"n": 21, "titolo": "Pinocchio è preso da un contadino, il quale lo costringe a far da can di guardia a un pollaio.", "tasso": 0.0}, {"n": 22, "titolo": "Pinocchio scuopre i ladri, e in ricompensa di essere stato fedele vien posto in libertà.", "tasso": 3.73}, {"n": 23, "titolo": "Pinocchio piange la morte della bella Bambina dai capelli turchini: poi trova un Colombo, che lo porta sulla riva del mare, e lì si getta nell'acqua per andare in aiuto del suo babbo Geppetto.", "tasso": 0.72}, {"n": 24, "titolo": "Pinocchio arriva all'isola delle «Api industriose» e ritrova la Fata.", "tasso": 0.0}, {"n": 25, "titolo": "Pinocchio promette alla Fata di esser buono e di studiare, perchè è stufo di fare il burattino e vuol diventare un bravo ragazzo.", "tasso": 4.12}, {"n": 26, "titolo": "Pinocchio va co' suoi compagni di scuola in riva al mare, per vedere il terribile Pesce-cane.", "tasso": 0.0}, {"n": 27, "titolo": "Gran combattimento fra Pinocchio e i suoi compagni: uno dei quali essendo rimasto ferito, Pinocchio viene arrestato dai carabinieri.", "tasso": 0.0}, {"n": 28, "titolo": "Pinocchio corre pericolo di esser fritto in padella, come un pesce.", "tasso": 1.53}, {"n": 29, "titolo": "Ritorna a casa della Fata, la quale gli promette che il giorno dopo non sarà più un burattino, ma diventerà un ragazzo. Gran colazione di caffè-e-latte per festeggiare questo grande avvenimento.", "tasso": 2.12}, {"n": 30, "titolo": "Pinocchio, invece di diventare un ragazzo, parte di nascosto col suo amico Lucignolo per il «Paese dei balocchi.»", "tasso": 0.0}, {"n": 31, "titolo": "Dopo cinque mesi di cuccagna, Pinocchio con sua gran meraviglia sente spuntarsi un bel pajo d'orecchie asinine, e diventa un ciuchino, con la coda e tutto.", "tasso": 5.34}, {"n": 32, "titolo": "A Pinocchio gli vengono gli orecchi di ciuco, e poi diventa un ciuchino vero e comincia a ragliare.", "tasso": 0.7}, {"n": 33, "titolo": "Diventato un ciuchino vero è portato a vendere, e lo compra il Direttore di una compagnia di pagliacci, per insegnargli a ballare e saltare i cerchi: ma una sera azzoppisce e allora lo ricompra un altro, per far con la sua pelle un tamburo.", "tasso": 1.42}, {"n": 34, "titolo": "Pinocchio gettato in mare, è mangiato dai pesci, e ritorna ad essere un burattino come prima: ma mentre nuota per salvarsi, è ingoiato dal terribile Pesce-cane.", "tasso": 1.03}, {"n": 35, "titolo": "Pinocchio ritrova in corpo al Pesce-cane.... chi ritrova? Leggete questo capitolo e lo saprete.", "tasso": 1.23}, {"n": 36, "titolo": "Finalmente Pinocchio cessa d'essere un burattino e diventa un ragazzo.", "tasso": 1.35}]};
+const $ = (id) => document.getElementById(id);
+function stepOn(n) { [1, 2, 3].forEach((i) => { $("s" + i).classList.toggle("on", i === n); $("p" + i).classList.toggle("on", i === n); }); window.scrollTo(0, 0); }
+
+// ---------- Prova 1 ----------
+let i1 = 0, punti1 = 0;
+function mostra1() {
+  const b = DATI.brani[i1];
+  $("count").textContent = `Brano ${i1 + 1} di ${DATI.brani.length}`;
+  $("quote").textContent = "«" + b.testo + "»";
+  $("bar").style.width = (i1 / DATI.brani.length * 100) + "%";
+  $("fb").textContent = ""; $("fb").className = "feedback";
+  $("bC").disabled = $("bM").disabled = false; $("next1").hidden = true;
+}
+function indizio(t) {
+  const n = t.split(/\s+/).length, frasi = t.split(/[.!?]+/).filter((f) => f.trim()).length;
+  if (t.includes("—")) return "Indizio: c'è il trattino di dialogo «—».";
+  if (t.includes(";")) return "Indizio: punto e virgola e frasi lunghe (" + Math.round(n / frasi) + " parole per frase).";
+  if ((t.match(/!/g) || []).length > 1) return "Indizio: tanti punti esclamativi.";
+  return "Indizio: frasi di " + Math.round(n / frasi) + " parole in media.";
+}
+function rispondi1(scelta) {
+  const b = DATI.brani[i1], giusto = scelta === b.autore;
+  if (giusto) punti1++;
+  $("fb").textContent = (giusto ? "Giusto! " : "No, era " + b.autore + ". ") + indizio(b.testo);
+  $("fb").className = "feedback " + (giusto ? "ok" : "ko");
+  $("bC").disabled = $("bM").disabled = true; $("next1").hidden = false; $("next1").focus();
+}
+$("bC").onclick = () => rispondi1("Collodi");
+$("bM").onclick = () => rispondi1("Manzoni");
+$("next1").onclick = () => {
+  i1++;
+  if (i1 < DATI.brani.length) return mostra1();
+  $("bar").style.width = "100%";
+  ["count", "quote"].forEach((id) => $(id).parentElement.hidden = true);
+  $("bC").parentElement.hidden = true; $("fb").hidden = true; $("next1").hidden = true;
+  $("myScore").textContent = punti1; $("end1").hidden = false;
+};
+$("go2").onclick = () => { stepOn(2); disegna(); };
+
+// ---------- Prova 2 ----------
+const MISURE = [
+  { k: 1, nome: "Trattini di dialogo «—»", unita: "ogni 100 parole" },
+  { k: 2, nome: "Parole per frase", unita: "" },
+  { k: 3, nome: "Punti esclamativi", unita: "ogni 100 parole" },
+  { k: 4, nome: "Punti e virgola", unita: "ogni 100 parole" },
+  { k: 5, nome: "Parole felici", unita: "ogni 1000 parole" },
+];
+let misura = MISURE[1];
+const P = DATI.punti; // [autore 0=Collodi 1=Manzoni, f1..f5]
+function scala(m) {
+  const v = P.map((p) => p[m.k]).sort((a, b) => a - b);
+  return [0, v[Math.floor(v.length * 0.98)]]; // ignoriamo il 2% più estremo, per leggibilità
+}
+function sogliaDaSlider() { const [lo, hi] = scala(misura); return lo + (hi - lo) * (+$("thr").value) / 100; }
+function accuratezza(soglia, lato) {
+  let ok = 0;
+  P.forEach((p) => { const prev = p[misura.k] > soglia ? lato : 1 - lato; if (prev === p[0]) ok++; });
+  return ok;
+}
+function disegna() {
+  const [lo, hi] = scala(misura), soglia = sogliaDaSlider(), lato = +$("side").value;
+  const X = (v) => 20 + 600 * Math.min(Math.max((v - lo) / (hi - lo || 1), 0), 1);
+  const tx = X(soglia);
+  const colSopra = lato === 0 ? "#FF8A3D" : "#1B998B", colSotto = lato === 0 ? "#1B998B" : "#FF8A3D";
+  const nomeSopra = lato === 0 ? "Collodi" : "Manzoni", nomeSotto = lato === 0 ? "Manzoni" : "Collodi";
+  let s = `<rect x="20" y="10" width="${tx - 20}" height="130" fill="${colSotto}" opacity=".10"/>`;
+  s += `<rect x="${tx}" y="10" width="${620 - tx}" height="130" fill="${colSopra}" opacity=".10"/>`;
+  s += `<text x="26" y="34" font-size="22" fill="#2B2D42" font-weight="700">→ ${nomeSotto}</text>`;
+  s += `<text x="614" y="34" font-size="22" fill="#2B2D42" font-weight="700" text-anchor="end">${nomeSopra} ←</text>`;
+  P.forEach((p, j) => {
+    const y = (p[0] === 0 ? 70 : 118) + ((j * 37) % 23) - 11;
+    s += `<circle cx="${X(p[misura.k]).toFixed(1)}" cy="${y}" r="6" fill="${p[0] === 0 ? "#FF8A3D" : "#1B998B"}" opacity=".8"/>`;
+  });
+  s += `<line x1="${tx}" x2="${tx}" y1="6" y2="146" stroke="#2B2D42" stroke-width="3"/>`;
+  s += `<line x1="20" x2="620" y1="146" y2="146" stroke="#E6E2D8"/>`;
+  s += `<text x="20" y="176" font-size="20" fill="#5E6175">${lo.toFixed(1).replace(".", ",")}</text>`;
+  s += `<text x="620" y="176" font-size="20" fill="#5E6175" text-anchor="end">${hi.toFixed(1).replace(".", ",")} ${misura.unita}</text>`;
+  $("plot").innerHTML = s;
+  $("thrVal").textContent = soglia.toFixed(2).replace(".", ",") + (misura.unita ? " " + misura.unita : "");
+  const ok = accuratezza(soglia, lato);
+  $("acc").textContent = Math.round(ok / P.length * 100) + "%";
+  $("accN").textContent = `${ok} brani giusti su ${P.length}`;
+  const pct = ok / P.length;
+  $("fb2").textContent = pct >= 0.97 ? "Hai trovato la regola dell'albero! Ma attenzione: perché funziona così bene?" :
+    pct >= 0.8 ? "Ottima regola. Riesci a fare ancora meglio con un'altra misura?" :
+    pct <= 0.3 ? "Prova a invertire l'autore sopra la soglia!" : "";
+  $("fb2").className = "feedback " + (pct >= 0.8 ? "ok" : "");
+}
+MISURE.forEach((m, j) => {
+  const b = document.createElement("button");
+  b.className = "chip"; b.textContent = m.nome; b.setAttribute("aria-pressed", j === 1);
+  b.onclick = () => { misura = m; document.querySelectorAll(".chip").forEach((c) => c.setAttribute("aria-pressed", c === b)); $("thr").value = 50; disegna(); };
+  $("chips").appendChild(b);
+});
+$("thr").oninput = disegna; $("side").onchange = disegna;
+$("best").onclick = () => {
+  let migliore = { ok: -1 };
+  for (let v = 0; v <= 100; v++) for (const lato of [0, 1]) {
+    $("thr").value = v; const ok = accuratezza(sogliaDaSlider(), lato);
+    if (ok > migliore.ok) migliore = { ok, v, lato };
+  }
+  $("thr").value = migliore.v; $("side").value = migliore.lato; disegna();
+};
+$("go3").onclick = () => { stepOn(3); mostra3(); };
+
+// ---------- Prova 3 ----------
+const SCELTE = [1, 25, 31, 36];
+function romano(n) { const r = [[10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"]]; let s = ""; for (const [v, l] of r) while (n >= v) { s += l; n -= v; } return s; }
+function mostra3() {
+  $("opts").innerHTML = ""; $("end3").hidden = true;
+  SCELTE.forEach((n) => {
+    const c = DATI.capitoli[n - 1], b = document.createElement("button");
+    b.className = "opt"; b.innerHTML = `<b>Capitolo ${romano(n)}</b>${c.titolo}`;
+    b.onclick = () => rispondi3(n);
+    b.dataset.n = n; $("opts").appendChild(b);
+  });
+}
+function rispondi3(scelta) {
+  document.querySelectorAll(".opt").forEach((b) => {
+    const n = +b.dataset.n; b.disabled = true;
+    b.classList.toggle("right", n === 31); b.classList.toggle("wrong", n === scelta && n !== 31);
+    b.insertAdjacentHTML("beforeend", `<span class="hint"> · ${DATI.capitoli[n - 1].tasso.toFixed(1).replace(".", ",")} parole felici ogni 1000</span>`);
+  });
+  const max = Math.max(...DATI.capitoli.map((c) => c.tasso));
+  let s = "";
+  DATI.capitoli.forEach((c, j) => {
+    const h = c.tasso / max * 150, x = 12 + j * 17.4;
+    s += `<rect x="${x}" y="${170 - h}" width="13" height="${h}" rx="2" fill="${c.n === 31 ? "#FF5D73" : "#FFC845"}"/>`;
+    if (c.n % 5 === 0 || c.n === 1 || c.n === 31) s += `<text x="${x + 6.5}" y="188" font-size="16" text-anchor="middle" fill="#5E6175">${c.n}</text>`;
+  });
+  $("chaps").innerHTML = s;
+  $("end3").hidden = false;
+  $("end3").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+$("again").onclick = () => {
+  i1 = 0; punti1 = 0; ["count", "quote"].forEach((id) => $(id).parentElement.hidden = false);
+  $("bC").parentElement.hidden = false; $("fb").hidden = false; $("end1").hidden = true;
+  stepOn(1); mostra1();
+};
+mostra1();
+</script>
+</body>
+</html>
