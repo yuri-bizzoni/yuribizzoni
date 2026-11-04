@@ -1,0 +1,4 @@
+# file creati dagli esercizi durante l'esecuzione dei notebook
+risultati/
+.ipynb_checkpoints/
+__pycache__/
