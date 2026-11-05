@@ -38,6 +38,15 @@ Due piccoli giochi da aprire con il telefono, inquadrando il QR code. Girano tut
 | 5 nov. · alberi | [Sei tu l'albero di decisione](https://yuri-bizzoni.github.io/yuribizzoni/ml-humanities/gioco/) | Collodi o Manzoni? Costruisci una regola con una soglia; il capitolo più felice di Pinocchio | `slides/Slide_QR_gioco.pptx` |
 | 9 nov. · SVM | [Sei tu la SVM](https://yuri-bizzoni.github.io/yuribizzoni/ml-humanities/gioco-svm/) | Traccia il confine tra Inferno e Paradiso; il peso delle parole; una SVM vera che attribuisce le tue frasi felici | `slides/Slide_QR_gioco_svm.pptx` |
 
+## Dentro un modello di lingua
+
+[L'Inferno del Transformer](https://yuri-bizzoni.github.io/yuribizzoni/ml-humanities/imbuto/) è una visualizzazione in 3D
+da girare ed esplorare con il mouse o con le dita. Un modello di lingua è disegnato come un imbuto di nove cerchi:
+tokenizzazione, embedding, attenzione, teste, rete feed-forward, residui, strati, unembedding, softmax. Ogni cerchio ha la sua
+matematica essenziale. La frase «La felicità è…» scende fino al fondo e risale una parola alla volta, fino a «riveder le
+stelle»; il Purgatorio spiega l'addestramento. Si collega alle lezioni 1, 2, 6, 7 e 8. Gira offline, perché three.js è nella
+cartella `imbuto/vendor/`. Il QR code è in `imbuto/qr_imbuto.png`.
+
 ## Come usare i notebook
 
 **Su Google Colab (consigliato in aula).** Cliccate sul bottone *Open in Colab* della lezione. La prima cella del notebook

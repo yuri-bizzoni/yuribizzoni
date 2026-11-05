@@ -1,0 +1,796 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Un modello di lingua come l'Inferno di Dante: nove cerchi, dalla tokenizzazione alla softmax, con la matematica essenziale.">
+<title>L'Inferno del Transformer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:ital,wght@0,400;0,500;0,700;1,400&family=IM+Fell+English:ital@0;1&display=swap">
+<style>
+  /* Layout: la scena 3D dell'imbuto a sinistra, il commento a destra come una chiosa a margine; su telefono uno sotto l'altro. */
+  :root {
+    color-scheme: dark;
+    --night: #14132B;      /* il cielo sopra l'imbuto */
+    --night-2: #1C1B3A;    /* il fondo dei pannelli */
+    --card: #25244C;       /* le chiose */
+    --line: #3A3866;
+    --text: #F6F0E2;       /* carta calda */
+    --muted: #BFB9D6;
+    --sun: #FFC845;        /* la luce, la felicità */
+    --tangerine: #FF8A3D;
+    --coral: #FF6B7F;
+    --teal: #39C9AE;
+    --violet: #A08CFF;
+    --ink: #2B2D42;        /* testo scuro sui fondi chiari */
+    --display: "IM Fell English", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    --body: "Alegreya Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --math: "STIX Two Math", "Cambria Math", "Latin Modern Math", math, serif;
+  }
+  :root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--night); color: var(--text); font: 17px/1.55 var(--body); }
+  .page { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 18px 40px; max-width: 1400px; margin: 0 auto; }
+  h1, h2, h3 { font-family: var(--display); font-weight: 400; text-wrap: balance; margin: 0; }
+  h1 { font-size: clamp(34px, 5.4vw, 60px); line-height: 1.02; letter-spacing: .005em; }
+  h1 em { color: var(--sun); font-style: italic; }
+  h2 { font-size: clamp(28px, 3vw, 36px); line-height: 1.1; }
+  p { margin: 0; }
+  a { color: var(--sun); }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  button:focus-visible, input:focus-visible, .stage:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
+
+  header.top { display: grid; gap: 10px; margin-bottom: 18px; max-width: 70ch; }
+  .eyebrow { font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+  .lede { color: var(--muted); font-size: 18px; }
+
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 460px); gap: 22px; align-items: start; }
+  .stage-col { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); display: grid; gap: 12px; min-width: 0; }
+  .stage { position: relative; height: min(76vh, 780px); min-height: 380px; border-radius: 22px; overflow: hidden; background: radial-gradient(120% 90% at 50% 70%, #2A2752 0%, var(--night) 70%); border: 1px solid var(--line); touch-action: none; cursor: grab; }
+  .stage:active { cursor: grabbing; }
+  .stage canvas { display: block; width: 100%; height: 100%; }
+  .labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  .lab { position: absolute; left: 0; top: 0; white-space: nowrap; will-change: transform; }
+  .lab.ring { pointer-events: auto; background: rgba(20, 19, 43, .72); color: var(--text); border-radius: 999px; padding: 2px 9px; font-size: 13px; line-height: 1.3; display: flex; gap: 6px; align-items: baseline; border: 1px solid transparent; transition: opacity .3s; }
+  .lab.ring b { font-family: var(--display); font-weight: 400; color: var(--sun); font-size: 15px; }
+  .lab.ring span { display: none; }
+  .lab.ring.on span, .lab.ring:hover span { display: inline; }
+  .lab.ring.on { border-color: var(--sun); background: rgba(37, 36, 76, .95); }
+  .labels.viaggio .lab.ring:not(.on) { opacity: .4; }
+  .lab.tok { background: var(--sun); color: var(--ink); font-weight: 700; font-size: 13px; padding: 1px 8px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.35); transition: opacity .3s; }
+  .lab.tok.dim { opacity: .35; }
+  .lab.tok.nuovo { box-shadow: 0 0 0 2px var(--text), 0 2px 10px rgba(0,0,0,.4); }
+  .lab.prob { font-size: 12.5px; color: var(--text); background: rgba(20,19,43,.85); padding: 1px 7px; border-radius: 6px; font-variant-numeric: tabular-nums; }
+  .lab.prob b { color: var(--sun); }
+  .lab.prob.top { background: var(--sun); color: var(--ink); font-weight: 700; }
+  .lab.prob.top b { color: var(--ink); }
+  .status { position: absolute; left: 12px; top: 12px; right: 12px; display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; pointer-events: none; }
+  .status .now { background: rgba(20,19,43,.82); border: 1px solid var(--line); border-radius: 12px; padding: 6px 12px; font-size: 15px; max-width: 66%; }
+  .status .hint { font-size: 12.5px; color: var(--muted); text-align: right; max-width: 32%; }
+  .hud { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: flex-end; pointer-events: none; }
+  .hud > * { pointer-events: auto; }
+  .hud-2 { display: flex; gap: 8px; }
+  .btn { border: 1px solid var(--line); background: rgba(28,27,58,.9); border-radius: 12px; padding: 9px 14px; font-weight: 500; }
+  .btn.main { background: var(--sun); color: var(--ink); border-color: var(--sun); font-weight: 700; }
+  .btn[aria-pressed="false"] { opacity: .7; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .fallback { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--muted); pointer-events: none; }
+  .hint-m { display: none; color: var(--muted); font-size: 14px; }
+
+  .sentence { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; background: var(--night-2); border: 1px solid var(--line); border-radius: 16px; padding: 10px 14px; min-height: 52px; }
+  .sentence .lbl { color: var(--muted); font-size: 14px; margin-right: 4px; }
+  .sentence .w { font-family: var(--display); font-size: 22px; line-height: 1.2; }
+  .sentence .w.new { color: var(--sun); }
+  .sentence .w.punt { margin-left: -6px; }
+  .sentence .cursor { width: 10px; height: 22px; background: var(--sun); opacity: .7; border-radius: 2px; }
+
+  .panel { display: grid; gap: 14px; min-width: 0; }
+  .circles { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { border: 1px solid var(--line); background: var(--night-2); border-radius: 999px; padding: 5px 11px; font-size: 14px; }
+  .chip b { font-family: var(--display); font-weight: 400; color: var(--sun); }
+  .chip.qui { border-color: var(--sun); }
+  .chip[aria-current="true"] { background: var(--sun); color: var(--ink); border-color: var(--sun); }
+  .chip[aria-current="true"] b { color: var(--ink); }
+  article { background: var(--night-2); border: 1px solid var(--line); border-radius: 22px; padding: 22px; display: grid; gap: 14px; min-width: 0; }
+  article .eyebrow { color: var(--sun); }
+  article .sotto { font-family: var(--display); font-style: italic; color: var(--muted); font-size: 19px; }
+  article p { max-width: 62ch; }
+  .verso { font-family: var(--display); font-style: italic; font-size: 19px; color: var(--text); border-left: 2px solid var(--sun); padding-left: 12px; }
+  .verso small { font-family: var(--body); font-style: normal; color: var(--muted); font-size: 13px; display: block; margin-top: 2px; }
+  .math { background: var(--card); border-radius: 14px; padding: 12px 14px; overflow-x: auto; display: grid; gap: 10px; }
+  math { font-family: var(--math); font-size: 1.12em; color: var(--text); }
+  .math .nota { font-size: 14px; color: var(--muted); }
+  .esempio { border: 1px dashed var(--line); border-radius: 14px; padding: 12px 14px; display: grid; gap: 8px; }
+  .esempio .eyebrow { color: var(--teal); }
+  .corso { font-size: 14px; color: var(--muted); }
+  .corso b { color: var(--text); font-weight: 500; }
+  .mappa { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .mappa button { width: 100%; text-align: left; border: 1px solid var(--line); background: var(--card); border-radius: 12px; padding: 8px 12px; display: grid; grid-template-columns: 44px 1fr; gap: 8px; align-items: baseline; }
+  .mappa b { font-family: var(--display); font-weight: 400; color: var(--sun); font-size: 18px; }
+  .mappa span { min-width: 0; }
+  .barre { display: grid; gap: 6px; }
+  .barra { display: grid; grid-template-columns: 92px 1fr 52px; gap: 8px; align-items: center; font-size: 15px; }
+  .barra .track { height: 14px; background: var(--card); border-radius: 7px; overflow: hidden; }
+  .barra .fill { display: block; height: 100%; background: var(--sun); border-radius: 7px; transition: width .25s ease; }
+  .barra.top .fill { background: var(--tangerine); }
+  .barra .pct { text-align: right; font-variant-numeric: tabular-nums; }
+  .temp { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; }
+  .temp input { width: 100%; accent-color: var(--sun); }
+  .temp output { font-variant-numeric: tabular-nums; font-weight: 700; min-width: 3ch; text-align: right; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .campione { min-height: 1.5em; color: var(--sun); font-weight: 500; }
+  footer { margin-top: 26px; color: var(--muted); font-size: 14px; display: grid; gap: 6px; max-width: 90ch; }
+
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    .stage-col { position: static; }
+    .stage { height: 58vh; min-height: 340px; }
+    .status .hint { display: none; }
+    .status .now { max-width: 100%; font-size: 14px; }
+    .hint-m { display: block; }
+    .btn { padding: 8px 12px; font-size: 15px; }
+    .lab.ring { font-size: 11.5px; padding: 0 6px; line-height: 1.25; }
+    .lab.ring b { font-size: 12.5px; }
+    article { padding: 18px 16px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .barra .fill, .lab.ring, .lab.tok { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <div class="eyebrow">Machine Learning for the Humanities · dentro un modello di lingua</div>
+    <h1>L'Inferno del <em>Transformer</em></h1>
+    <p class="lede">Nove cerchi dentro un modello di lingua. In cima entra il testo, al fondo esce una parola sola; poi si risale e si ricomincia. Quando un modello genera, si parla di <i>inferenza</i>: qui l'inferenza è un Inferno.</p>
+  </header>
+
+  <div class="layout">
+    <section class="stage-col" aria-label="L'imbuto in tre dimensioni">
+      <div class="stage" id="stage" tabindex="0" aria-label="Imbuto in 3D con nove cerchi. Trascina per ruotare; con la tastiera, frecce destra e sinistra per ruotare, su e giù per cambiare cerchio.">
+        <canvas id="scena"></canvas>
+        <div class="labels" id="labels" aria-hidden="true"></div>
+        <div class="fallback" id="fallback" hidden>Questo browser non mostra il 3D. Il commento funziona comunque: scegliete un cerchio dall'elenco e generate la frase parola per parola.</div>
+        <div class="status"><p class="now" id="now" aria-live="polite">Pronto: «La felicità è…» aspetta alla porta.</p><p class="hint">Trascina per ruotare · rotellina per avvicinarti · tocca un cerchio per scendere</p></div>
+        <div class="hud">
+          <button class="btn main" id="genera">Prossima parola</button>
+          <div class="hud-2">
+            <button class="btn" id="alto" title="Guarda l'imbuto dall'alto">Dall'alto</button>
+            <button class="btn" id="ruota" aria-pressed="true" title="Rotazione automatica">Ruota</button>
+          </div>
+        </div>
+      </div>
+      <p class="hint-m">Trascinate per ruotare, due dita per avvicinarvi, toccate un cerchio per scendere.</p>
+      <div class="sentence" id="frase" aria-live="polite"></div>
+    </section>
+
+    <section class="panel" aria-label="Commento ai cerchi">
+      <nav class="circles" id="cerchi" aria-label="Cerchi dell'imbuto"></nav>
+      <article id="chiosa"></article>
+    </section>
+  </div>
+
+  <footer>
+    <p>Le formule sono quelle dei transformer (Vaswani et al., <i>Attention Is All You Need</i>, 2017, nella variante dei modelli generativi). I pesi dell'attenzione e le probabilità delle parole sono esempi illustrativi, non l'uscita di un modello vero.</p>
+    <p>Machine Learning for the Humanities · Università di Roma Tor Vergata · versi di Dante dall'<i>Inferno</i>, canti III e XXXIV.</p>
+  </footer>
+</div>
+
+<script src="vendor/three.min.js"></script>
+<script>
+(() => {
+  // ------------------------------------------------------------------
+  //  Il viaggio della frase: probabilità illustrative (logit) per ogni passo
+  // ------------------------------------------------------------------
+  const PASSI = [
+    { cand: [["un", 2.1], ["una", 1.6], ["la", 1.2], ["il", 0.9], ["come", 0.7], ["fatta", 0.4]] },
+    { cand: [["attimo", 2.0], ["sogno", 1.8], ["sentimento", 1.4], ["viaggio", 1.0], ["dono", 0.9], ["mistero", 0.6]] },
+    { cand: [["di", 2.2], ["che", 1.7], [",", 1.0], ["fuggente", 0.9], ["solo", 0.5], ["perfetto", 0.4]] },
+    { cand: [["luce", 1.7], ["pace", 1.5], ["gioia", 1.4], ["sole", 0.9], ["silenzio", 0.8], ["eternità", 0.5]] },
+    { cand: [[".", 2.0], ["che", 1.5], [",", 1.2], ["e", 1.0], ["nel", 0.7], ["sul", 0.4]] },
+  ];
+  const INIZIO = ["La", "felicità", "è"];
+  const stato = { token: INIZIO.slice(), passo: 0, T: 1.0, scelto: -1, animazione: null, finito: false, angolo: 0 };
+
+  const softmax = (logit, T) => { const m = Math.max(...logit), e = logit.map((z) => Math.exp((z - m) / T)), s = e.reduce((a, b) => a + b, 0); return e.map((x) => x / s); };
+  const argmax = (a) => a.indexOf(Math.max(...a));
+  const pct = (p) => (p * 100).toFixed(0) + "%";
+  const mostra = (w) => (w === "," ? "«,»" : w === "." ? "«.»" : w);
+  const testo = (tok) => tok.reduce((s, t) => (s === "" ? t : /^[.,;:!?]$/.test(t) ? s + t : s + " " + t), "");
+  function passoCorrente() {   // i candidati del passo in corso; a frase finita, l'ultimo passo
+    const fine = stato.passo >= PASSI.length;
+    return { p: PASSI[Math.min(stato.passo, PASSI.length - 1)], ctx: fine ? stato.token.slice(0, -1) : stato.token };
+  }
+  function attenzione(ctx) {   // quanto l'ultimo token guarda ciascun token precedente (esempio)
+    const n = ctx.length, w = ctx.map((t, j) => 0.06 + (t === "felicità" ? 0.5 : 0) + (j === n - 2 ? 0.22 : 0) + (j === n - 1 ? 0.16 : 0));
+    const s = w.reduce((a, b) => a + b, 0); return w.map((x) => x / s);
+  }
+
+  // ------------------------------------------------------------------
+  //  Le chiose: testo e matematica di ogni cerchio
+  // ------------------------------------------------------------------
+  const MV = "𝒱";
+  const CERCHI = [
+    { n: "I", nome: "La porta", sotto: "Tokenizzazione",
+      verso: ["Per me si va ne la città dolente", "Inferno III, 1"],
+      testo: ["Si entra solo a pezzi. Il testo viene diviso in <b>token</b>, le unità che il modello conosce: le parole frequenti sono un token solo, quelle rare si spezzano in più parti (per esempio «felicità» potrebbe diventare «fel» + «icità»).",
+              "Ogni token è un numero: la sua posizione in un vocabolario fisso, deciso prima dell'addestramento."],
+      math: [`<math display="block"><mi>𝐭</mi><mo>=</mo><mo>(</mo><msub><mi>t</mi><mn>1</mn></msub><mo>,</mo><mo>…</mo><mo>,</mo><msub><mi>t</mi><mi>n</mi></msub><mo>)</mo><mo>,</mo><mspace width="0.8em"></mspace><msub><mi>t</mi><mi>i</mi></msub><mo>∈</mo><mo>{</mo><mn>1</mn><mo>,</mo><mo>…</mo><mo>,</mo><mo>|</mo><mi>${MV}</mi><mo>|</mo><mo>}</mo></math>`],
+      notaMath: "|𝒱| è la grandezza del vocabolario: da circa 30.000 a oltre 200.000 token.",
+      esempio: () => `«${testo(stato.token)}» → ${stato.token.map((t) => "[" + t + "]").join(" ")}. Qui mostriamo parole intere, per semplicità.`,
+      corso: "Lezione 2: tokenizzare un testo con un'espressione regolare." },
+    { n: "II", nome: "I vettori", sotto: "Embedding e posizione",
+      testo: ["Ogni token diventa un <b>vettore</b>: una riga di una grande tabella 𝐄, imparata durante l'addestramento. A questo vettore se ne somma un altro che codifica la <b>posizione</b>, perché il modello sappia chi viene prima e chi dopo.",
+              "Sono parenti dei vettori di parole della lezione 7, con una differenza: qui sono solo il punto di partenza. Nei cerchi successivi ogni vettore si mescola con il contesto."],
+      math: [`<math display="block"><msub><mi>𝐱</mi><mi>i</mi></msub><mo>=</mo><msub><mi>𝐄</mi><msub><mi>t</mi><mi>i</mi></msub></msub><mo>+</mo><msub><mi>𝐩</mi><mi>i</mi></msub><mo>∈</mo><msup><mi>ℝ</mi><mi>d</mi></msup><mo>,</mo><mspace width="0.8em"></mspace><mi>𝐄</mi><mo>∈</mo><msup><mi>ℝ</mi><mrow><mo>|</mo><mi>${MV}</mi><mo>|</mo><mo>×</mo><mi>d</mi></mrow></msup></math>`],
+      notaMath: "d è la dimensione del modello: 768 nei più piccoli, oltre 12.000 nei più grandi.",
+      esempio: () => `«felicità» diventa d numeri: una freccia in uno spazio con migliaia di dimensioni. Nel disegno ogni token prende il suo colore.`,
+      corso: "Lezione 7: il significato come compagnia, le parole come vettori." },
+    { n: "III", nome: "Attenzione", sotto: "Chi guarda chi",
+      testo: ["Ogni token pone una domanda (<i>query</i>, 𝐪), ogni token precedente offre una chiave (<i>key</i>, 𝐤) e un contenuto (<i>value</i>, 𝐯). Il prodotto scalare tra domanda e chiave dice quanto guardare; la softmax lo trasforma in pesi che sommano a 1.",
+              "La condizione j ≤ i è la <b>maschera causale</b>: si guarda solo indietro, mai le parole che devono ancora venire."],
+      math: [`<math display="block"><msub><mi>𝐪</mi><mi>i</mi></msub><mo>=</mo><msub><mi>𝐖</mi><mi>Q</mi></msub><msub><mi>𝐱</mi><mi>i</mi></msub><mo>,</mo><mspace width="0.6em"></mspace><msub><mi>𝐤</mi><mi>j</mi></msub><mo>=</mo><msub><mi>𝐖</mi><mi>K</mi></msub><msub><mi>𝐱</mi><mi>j</mi></msub><mo>,</mo><mspace width="0.6em"></mspace><msub><mi>𝐯</mi><mi>j</mi></msub><mo>=</mo><msub><mi>𝐖</mi><mi>V</mi></msub><msub><mi>𝐱</mi><mi>j</mi></msub></math>`,
+             `<math display="block"><msub><mi>α</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>=</mo><mfrac><mrow><mi>exp</mi><mo>(</mo><msub><mi>𝐪</mi><mi>i</mi></msub><mo>·</mo><msub><mi>𝐤</mi><mi>j</mi></msub><mo>/</mo><msqrt><msub><mi>d</mi><mi>k</mi></msub></msqrt><mo>)</mo></mrow><mrow><munder><mo>∑</mo><mrow><mi>m</mi><mo>≤</mo><mi>i</mi></mrow></munder><mi>exp</mi><mo>(</mo><msub><mi>𝐪</mi><mi>i</mi></msub><mo>·</mo><msub><mi>𝐤</mi><mi>m</mi></msub><mo>/</mo><msqrt><msub><mi>d</mi><mi>k</mi></msub></msqrt><mo>)</mo></mrow></mfrac></math>`,
+             `<math display="block"><msub><mi>𝐨</mi><mi>i</mi></msub><mo>=</mo><munder><mo>∑</mo><mrow><mi>j</mi><mo>≤</mo><mi>i</mi></mrow></munder><msub><mi>α</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><msub><mi>𝐯</mi><mi>j</mi></msub></math>`,
+             `<math display="block"><mtext>Attention</mtext><mo>(</mo><mi>Q</mi><mo>,</mo><mi>K</mi><mo>,</mo><mi>V</mi><mo>)</mo><mo>=</mo><mtext>softmax</mtext><mrow><mo>(</mo><mfrac><mrow><mi>Q</mi><msup><mi>K</mi><mo>⊤</mo></msup></mrow><msqrt><msub><mi>d</mi><mi>k</mi></msub></msqrt></mfrac><mo>+</mo><mi>M</mi><mo>)</mo></mrow><mi>V</mi></math>`],
+      notaMath: "L'ultima riga è la stessa cosa in forma di matrici: M vale −∞ sopra la diagonale, così le parole future pesano zero.",
+      esempio: () => { const ctx = stato.token, a = attenzione(ctx), last = ctx[ctx.length - 1];
+        return `«${last}» guarda: ` + ctx.map((t, j) => `«${t}» ${pct(a[j])}`).join(", ") + ". Nel disegno, archi più spessi per pesi più grandi. (Pesi illustrativi.)"; },
+      corso: "Lezione 6: il prodotto scalare è il cuore della similarità del coseno." },
+    { n: "IV", nome: "Molte teste", sotto: "Attenzione in parallelo",
+      testo: ["L'attenzione si fa più volte in parallelo, con matrici diverse: sono le <b>teste</b>. Una può seguire l'accordo grammaticale, un'altra il soggetto della frase, un'altra la parola appena prima. I risultati si affiancano e si rimescolano."],
+      math: [`<math display="block"><msub><mtext>head</mtext><mi>h</mi></msub><mo>=</mo><mtext>Attention</mtext><mo>(</mo><mi>X</mi><msubsup><mi>𝐖</mi><mi>Q</mi><mrow><mo>(</mo><mi>h</mi><mo>)</mo></mrow></msubsup><mo>,</mo><mi>X</mi><msubsup><mi>𝐖</mi><mi>K</mi><mrow><mo>(</mo><mi>h</mi><mo>)</mo></mrow></msubsup><mo>,</mo><mi>X</mi><msubsup><mi>𝐖</mi><mi>V</mi><mrow><mo>(</mo><mi>h</mi><mo>)</mo></mrow></msubsup><mo>)</mo></math>`,
+             `<math display="block"><mtext>MultiHead</mtext><mo>(</mo><mi>X</mi><mo>)</mo><mo>=</mo><mo>[</mo><msub><mtext>head</mtext><mn>1</mn></msub><mo>;</mo><mo>…</mo><mo>;</mo><msub><mtext>head</mtext><mi>H</mi></msub><mo>]</mo><msub><mi>𝐖</mi><mi>O</mi></msub></math>`],
+      notaMath: "H, il numero di teste: da 12 a più di 100. X ha una riga per token.",
+      esempio: () => `Nel disegno tre teste guardano cose diverse: una la parola precedente (verde acqua), una «felicità» (azzurro), una l'inizio della frase (viola).`,
+      corso: "" },
+    { n: "V", nome: "La rete", sotto: "Feed-forward (MLP)",
+      testo: ["Dopo aver guardato gli altri, ogni token passa <b>da solo</b> in una piccola rete neurale: il vettore si allarga (di solito 4 volte), passa per una funzione non lineare σ, e si restringe di nuovo.",
+              "Qui sta la maggior parte dei parametri. Si pensa che molte associazioni imparate (fatti, abitudini lessicali) vivano proprio in questi strati."],
+      math: [`<math display="block"><mtext>FFN</mtext><mo>(</mo><mi>𝐱</mi><mo>)</mo><mo>=</mo><msub><mi>𝐖</mi><mn>2</mn></msub><mi>σ</mi><mo>(</mo><msub><mi>𝐖</mi><mn>1</mn></msub><mi>𝐱</mi><mo>+</mo><msub><mi>𝐛</mi><mn>1</mn></msub><mo>)</mo><mo>+</mo><msub><mi>𝐛</mi><mn>2</mn></msub><mo>,</mo><mspace width="0.8em"></mspace><msub><mi>𝐖</mi><mn>1</mn></msub><mo>∈</mo><msup><mi>ℝ</mi><mrow><mn>4</mn><mi>d</mi><mo>×</mo><mi>d</mi></mrow></msup></math>`],
+      notaMath: "σ è una funzione non lineare, spesso la GELU o una sua parente: una versione morbida di «tieni i valori positivi, azzera i negativi».",
+      esempio: () => `Ogni token, uno alla volta, attraversa la stessa rete: nessuno guarda gli altri, qui.`,
+      corso: "Lezione 1: una regressione lineare è 𝐖𝐱 + 𝐛. Qui ce ne sono milioni, piegate da σ." },
+    { n: "VI", nome: "Il fiume", sotto: "Residui e normalizzazione",
+      testo: ["Come i fiumi dell'Inferno attraversano tutti i cerchi, un flusso attraversa tutti i blocchi: ogni blocco non sostituisce il vettore, <b>ci aggiunge</b> qualcosa (connessione residua).",
+              "La normalizzazione (LN) riporta i numeri a una scala stabile prima di ogni passaggio, così la discesa non diverge."],
+      math: [`<math display="block"><mi>𝐡</mi><mo>←</mo><mi>𝐡</mi><mo>+</mo><mtext>MultiHead</mtext><mo>(</mo><mtext>LN</mtext><mo>(</mo><mi>𝐡</mi><mo>)</mo><mo>)</mo></math>`,
+             `<math display="block"><mi>𝐡</mi><mo>←</mo><mi>𝐡</mi><mo>+</mo><mtext>FFN</mtext><mo>(</mo><mtext>LN</mtext><mo>(</mo><mi>𝐡</mi><mo>)</mo><mo>)</mo></math>`,
+             `<math display="block"><mtext>LN</mtext><mo>(</mo><mi>𝐱</mi><mo>)</mo><mo>=</mo><mi>γ</mi><mo>⊙</mo><mfrac><mrow><mi>𝐱</mi><mo>−</mo><mi>μ</mi></mrow><mi>σ</mi></mfrac><mo>+</mo><mi>β</mi></math>`],
+      notaMath: "μ e σ sono media e deviazione standard dei d numeri del vettore; γ e β si imparano.",
+      esempio: () => `Il vettore di «${stato.token[stato.token.length - 1]}» all'uscita è ancora il suo, ma arricchito da ciò che ha visto. Nel disegno i colori dei token si avvicinano, cerchio dopo cerchio.`,
+      corso: "" },
+    { n: "VII", nome: "Strato dopo strato", sotto: "Il blocco si ripete L volte",
+      testo: ["Attenzione, rete, residui: questo blocco si ripete <b>L volte</b>, sempre uguale nella forma e con pesi diversi. I primi strati tendono a cogliere forme e grammatica, gli ultimi il senso e la previsione.",
+              "Nel disegno i cerchi da III a VI sono un blocco solo; un modello vero scende per decine di blocchi."],
+      math: [`<math display="block"><msup><mi>𝐡</mi><mrow><mo>(</mo><mi>ℓ</mi><mo>)</mo></mrow></msup><mo>=</mo><msub><mtext>Blocco</mtext><mi>ℓ</mi></msub><mo>(</mo><msup><mi>𝐡</mi><mrow><mo>(</mo><mi>ℓ</mi><mo>−</mo><mn>1</mn><mo>)</mo></mrow></msup><mo>)</mo><mo>,</mo><mspace width="0.8em"></mspace><mi>ℓ</mi><mo>=</mo><mn>1</mn><mo>,</mo><mo>…</mo><mo>,</mo><mi>L</mi></math>`,
+             `<math display="block"><mtext>parametri</mtext><mo>≈</mo><mn>12</mn><mi>L</mi><msup><mi>d</mi><mn>2</mn></msup></math>`],
+      notaMath: "Con d = 4096 e L = 32: circa 6,4 miliardi di parametri. L va da 12 a più di 100.",
+      esempio: () => `Ogni strato rilegge «${testo(stato.token)}» con occhi un po' diversi.`,
+      corso: "" },
+    { n: "VIII", nome: "Ritorno alle parole", sotto: "Unembedding e logit",
+      testo: ["Al fondo dei blocchi conta solo il vettore dell'<b>ultimo token</b>: deve contenere tutto ciò che serve a prevedere il successivo.",
+              "Una moltiplicazione per una matrice lo riporta al vocabolario: un punteggio (<i>logit</i>) per ognuna delle |𝒱| parole possibili. Spesso questa matrice è la stessa dell'embedding, trasposta."],
+      math: [`<math display="block"><mi>𝐳</mi><mo>=</mo><msub><mi>𝐖</mi><mi>U</mi></msub><msubsup><mi>𝐡</mi><mi>n</mi><mrow><mo>(</mo><mi>L</mi><mo>)</mo></mrow></msubsup><mo>∈</mo><msup><mi>ℝ</mi><mrow><mo>|</mo><mi>${MV}</mi><mo>|</mo></mrow></msup></math>`],
+      notaMath: "Un numero per ogni parola del vocabolario: decine di migliaia di candidati.",
+      esempio: () => `Da «${stato.token[stato.token.length - 1]}» partono i punteggi per tutte le parole che potrebbero venire dopo. Nel disegno gli altri token si spengono.`,
+      corso: "Lezione 8: un modello di lingua dà un punteggio a ogni parola possibile." },
+    { n: "IX", nome: "Il fondo", sotto: "Softmax, temperatura, scelta",
+      testo: ["La <b>softmax</b> trasforma i punteggi in probabilità. La <b>temperatura</b> T decide quanto rischiare: bassa, vince quasi sempre la parola più probabile; alta, anche le parole rare hanno una possibilità.",
+              "La parola scelta si aggiunge al testo e tutto ricomincia dalla porta: è la generazione <b>autoregressiva</b>, un token alla volta."],
+      math: [`<math display="block"><mi>P</mi><mo>(</mo><mi>w</mi><mo>∣</mo><msub><mi>t</mi><mn>1</mn></msub><mo>…</mo><msub><mi>t</mi><mi>n</mi></msub><mo>)</mo><mo>=</mo><mfrac><mrow><mi>exp</mi><mo>(</mo><msub><mi>z</mi><mi>w</mi></msub><mo>/</mo><mi>T</mi><mo>)</mo></mrow><mrow><munder><mo>∑</mo><mrow><mi>v</mi><mo>∈</mo><mi>${MV}</mi></mrow></munder><mi>exp</mi><mo>(</mo><msub><mi>z</mi><mi>v</mi></msub><mo>/</mo><mi>T</mi><mo>)</mo></mrow></mfrac></math>`,
+             `<math display="block"><msub><mi>t</mi><mrow><mi>n</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>∼</mo><mi>P</mi><mo>(</mo><mo>·</mo><mo>∣</mo><msub><mi>t</mi><mn>1</mn></msub><mo>…</mo><msub><mi>t</mi><mi>n</mi></msub><mo>)</mo></math>`],
+      notaMath: "Nel viaggio qui accanto il modello sceglie sempre la parola più probabile (decodifica greedy): la temperatura cambia le probabilità, non il vincitore.",
+      verso: ["E quindi uscimmo a riveder le stelle.", "Inferno XXXIV, 139"],
+      interattivo: true,
+      corso: "Lezione 8: generare testo un token alla volta." },
+  ];
+  const PURGATORIO = { n: "P", nome: "Il Purgatorio", sotto: "Come impara: l'addestramento",
+    testo: ["L'Inferno è il calcolo di una previsione. L'addestramento è una salita: il modello legge miliardi di frasi e, a ogni token, misura quanto era <b>sorpreso</b> dalla parola vera.",
+            "La sorpresa media è la funzione di perdita; la sua esponenziale è la <b>perplessità</b> della lezione 8. Poi ogni peso si corregge un poco nella direzione che riduce l'errore. Come le anime del Purgatorio, il modello sale correggendosi."],
+    math: [`<math display="block"><mi>ℒ</mi><mo>(</mo><mi>θ</mi><mo>)</mo><mo>=</mo><mo>−</mo><mfrac><mn>1</mn><mi>N</mi></mfrac><munderover><mo>∑</mo><mrow><mi>i</mi><mo>=</mo><mn>1</mn></mrow><mi>N</mi></munderover><mi>log</mi><mspace width="0.2em"></mspace><msub><mi>P</mi><mi>θ</mi></msub><mo>(</mo><msub><mi>t</mi><mrow><mi>i</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>∣</mo><msub><mi>t</mi><mn>1</mn></msub><mo>…</mo><msub><mi>t</mi><mi>i</mi></msub><mo>)</mo></math>`,
+           `<math display="block"><mtext>perplessità</mtext><mo>=</mo><mi>exp</mi><mo>(</mo><mi>ℒ</mi><mo>)</mo><mo>,</mo><mspace width="1em"></mspace><mi>θ</mi><mo>←</mo><mi>θ</mi><mo>−</mo><mi>η</mi><msub><mo>∇</mo><mi>θ</mi></msub><mi>ℒ</mi></math>`],
+    notaMath: "θ sono tutti i pesi del modello (le matrici 𝐄, 𝐖_Q, 𝐖_K, 𝐖_V, …), η è il passo della correzione.",
+    esempio: () => `Se dopo «La felicità è» il testo vero continuava con «un», la perdita è −log P(«un»): più il modello lo riteneva probabile, meno paga.`,
+    corso: "Lezione 8: la perplessità, quanto un modello è sorpreso." };
+
+  // ------------------------------------------------------------------
+  //  Pannello: la chiosa di ogni cerchio
+  // ------------------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  let cerchio = -1;   // -1 = mappa, 0..8 = cerchi, 9 = purgatorio
+
+  function chipNav() {
+    const nav = $("cerchi"); nav.innerHTML = "";
+    const voci = [[-1, "Mappa", ""]].concat(CERCHI.map((c, k) => [k, c.nome, c.n])).concat([[9, "Purgatorio", ""]]);
+    voci.forEach(([k, nome, num]) => {
+      const b = document.createElement("button"); b.className = "chip"; b.dataset.k = k;
+      b.innerHTML = num ? `<b>${num}</b> ${nome}` : nome;
+      b.onclick = () => seleziona(k, true); nav.appendChild(b);
+    });
+  }
+  function segnaQui(k) { document.querySelectorAll("#cerchi .chip").forEach((b) => b.classList.toggle("qui", +b.dataset.k === k)); }
+  function barreHTML() {
+    const { p } = passoCorrente(), pr = softmax(p.cand.map((c) => c[1]), stato.T), best = argmax(pr);
+    return p.cand.map(([w], i) => `<div class="barra${i === best ? " top" : ""}"><span>${mostra(w)}</span><span class="track"><span class="fill" style="width:${(pr[i] * 100).toFixed(1)}%"></span></span><span class="pct">${pct(pr[i])}</span></div>`).join("");
+  }
+  function chiosa(k) {
+    const art = $("chiosa");
+    if (k === -1) {
+      art.innerHTML = `<div class="eyebrow">Come leggere l'imbuto</div><h2>La mappa</h2>
+        <p>Un modello di lingua fa una cosa sola: dato un testo, calcola la probabilità della parola successiva. Per farlo il testo scende attraverso una serie di trasformazioni, sempre le stesse, che qui disegniamo come i cerchi dell'Inferno: larghi in alto, stretti in fondo.</p>
+        <p>In cima entrano tutti i token della frase; al fondo esce una distribuzione di probabilità sull'intero vocabolario, e da lì una parola sola. Quella parola si aggiunge alla frase e il viaggio ricomincia dalla porta.</p>
+        <ol class="mappa">${CERCHI.map((c, i) => `<li><button data-k="${i}"><b>${c.n}</b><span>${c.nome} · ${c.sotto}</span></button></li>`).join("")}
+        <li><button data-k="9"><b>P</b><span>Il Purgatorio · come impara</span></button></li></ol>
+        <p>Premete <b>Prossima parola</b> per seguire «La felicità è» fino in fondo, e ritorno. Oppure toccate un cerchio: i token scendono lì e si fermano.</p>`;
+      art.querySelectorAll(".mappa button").forEach((b) => (b.onclick = () => seleziona(+b.dataset.k, true)));
+      return;
+    }
+    const c = k === 9 ? PURGATORIO : CERCHI[k];
+    const verso = c.verso && !c.interattivo ? `<p class="verso">«${c.verso[0]}»<small>${c.verso[1]}</small></p>` : "";
+    let html = `<div class="eyebrow">${k === 9 ? "Fuori dall'imbuto" : "Cerchio " + c.n}</div><h2>${c.nome}</h2><p class="sotto">${c.sotto}</p>${verso}`;
+    html += c.testo.map((t) => `<p>${t}</p>`).join("");
+    html += `<div class="math">${c.math.join("")}<p class="nota">${c.notaMath}</p></div>`;
+    if (c.interattivo) {
+      html += `<div class="esempio"><div class="eyebrow">Provate la temperatura</div>
+        <p>Dopo «${testo(passoCorrente().ctx)}», le sei parole più probabili (le altre migliaia sono omesse):</p>
+        <div class="barre" id="barre9">${barreHTML()}</div>
+        <div class="temp"><label for="temp">T</label><input type="range" id="temp" min="0.2" max="2" step="0.1" value="${stato.T}"><output id="tempv" for="temp">${stato.T.toFixed(1).replace(".", ",")}</output></div>
+        <div class="row"><button class="btn" id="campiona">Campiona una parola</button><span class="campione" id="campione" aria-live="polite"></span></div></div>`;
+      html += `<p class="verso">«${c.verso[0]}»<small>${c.verso[1]}</small></p>`;
+    } else if (c.esempio) {
+      html += `<div class="esempio"><div class="eyebrow">Nel nostro esempio</div><p>${c.esempio()}</p></div>`;
+    }
+    if (c.corso) html += `<p class="corso"><b>Nel corso.</b> ${c.corso}</p>`;
+    art.innerHTML = html;
+    if (c.interattivo) {
+      $("temp").oninput = (e) => { stato.T = +e.target.value; $("tempv").textContent = stato.T.toFixed(1).replace(".", ","); $("barre9").innerHTML = barreHTML(); if (scena) aggiornaBarre3D(); };
+      $("campiona").onclick = () => {
+        const { p } = passoCorrente(), pr = softmax(p.cand.map((x) => x[1]), stato.T);
+        let r = Math.random(), i = 0; while (i < pr.length - 1 && (r -= pr[i]) > 0) i++;
+        $("campione").textContent = `È uscita «${mostra(p.cand[i][0])}» (probabilità ${pct(pr[i])}).`;
+      };
+    }
+  }
+  function seleziona(k, vola) {
+    cerchio = k;
+    document.querySelectorAll("#cerchi .chip").forEach((b) => b.setAttribute("aria-current", String(+b.dataset.k === k)));
+    chiosa(k);
+    if (scena) { evidenzia(k); if (vola) volaA(k); if (!stato.animazione) vaiA(k); }
+  }
+  function frase() {
+    const box = $("frase"), n0 = INIZIO.length;
+    box.innerHTML = `<span class="lbl">La frase:</span>` + stato.token.map((t, i) => `<span class="w${i >= n0 ? " new" : ""}${/^[.,;:!?]$/.test(t) ? " punt" : ""}">${t}</span>`).join("") + (stato.finito ? "" : `<span class="cursor" aria-hidden="true"></span>`);
+  }
+
+  // ------------------------------------------------------------------
+  //  La scena 3D
+  // ------------------------------------------------------------------
+  const RID = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const N = 9, STEP = 1.3, R = (k) => 9.6 * (1 - 0.088 * k), Y = (k) => -k * STEP, R_POZZO = 1.0, Y_POZZO = Y(N - 1) - 1.0;
+  const midR = (k) => (k < N - 1 ? (R(k) + R(k + 1)) / 2 : (R(k) + R_POZZO) / 2);
+  const POSTI = [-0.5, 0.5, -1.5, 1.5, -2.5, 2.5];   // le barre: le due più probabili al centro
+  const DUR = { scendi: RID ? 0.01 : 0.5, fondo: 2.4, risali: RID ? 0.01 : 1.5,
+    sosta: (k) => (RID ? 0.8 : k === 0 ? 0.6 : k === 2 || k === 3 ? 1.6 : k === 7 ? 0.7 : 0.3) };
+  const stage = $("stage"), canvas = $("scena"), labels = $("labels");
+  let scena = false, renderer, camera, scene, raycaster, corteo, stelle, pozzo, geoOrb, geoBarra, SOLE, BIANCO;
+  const pickables = [], rims = [], terrazze = [], labRing = [], orbs = [];
+  let archi = [], barre = [], stella = null, stellaEl = null, glide = null, sPos = 0;
+  let ultimoTocco = 0, autoRuota = !RID, stelleAccese = false, fattore = 1, velTest = 1;
+  const VISTA = { phi: 0.95, radius: 27, ty: -3.0, off: 0 };   // la vista d'insieme
+  const cam = Object.assign({ theta: 0.65, phiVisto: 0.95 }, VISTA, { goal: Object.assign({}, VISTA) });
+
+  function colore(t) {
+    const P = [0xFFC845, 0xFF8A3D, 0xFF6B7F, 0xA08CFF].map((c) => new THREE.Color(c));
+    const s = t * (P.length - 1), i = Math.min(P.length - 2, Math.floor(s)), f = s - i;
+    return P[i].clone().lerp(P[i + 1], f);
+  }
+
+  function costruisci() {
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    SOLE = new THREE.Color(0xFFC845); BIANCO = new THREE.Color(0xFFFFFF); vp = new THREE.Vector3();
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x14132B);
+    scene.fog = new THREE.Fog(0x14132B, 34, 95);
+    camera = new THREE.PerspectiveCamera(42, 1, 0.1, 500);
+    raycaster = new THREE.Raycaster();
+    scene.add(new THREE.HemisphereLight(0xFFF3CC, 0x2A2850, 0.85));
+    const d = new THREE.DirectionalLight(0xFFFFFF, 0.55); d.position.set(10, 22, 8); scene.add(d);
+    const luce = new THREE.PointLight(0xFFC845, 2.4, 26); luce.position.set(0, Y(N - 1) - 0.4, 0); scene.add(luce);
+    corteo = new THREE.Group(); scene.add(corteo);   // i token, gli archi e le barre: girano insieme verso chi guarda
+    geoOrb = new THREE.SphereGeometry(0.26, 24, 12); geoBarra = new THREE.CylinderGeometry(0.16, 0.16, 1, 20);
+
+    for (let k = 0; k < N; k++) {
+      const c = colore(k / (N - 1)), dentro = k < N - 1 ? R(k + 1) : R_POZZO, scuro = 0.62 - 0.035 * k;
+      const terr = new THREE.Mesh(new THREE.RingGeometry(dentro, R(k), 160, 1),
+        new THREE.MeshStandardMaterial({ color: c.clone().multiplyScalar(scuro), emissive: c, emissiveIntensity: 0.05, roughness: 0.92, side: THREE.DoubleSide }));
+      terr.rotation.x = -Math.PI / 2; terr.position.y = Y(k); terr.userData.k = k; scene.add(terr); pickables.push(terr); terrazze.push(terr);
+      const parete = new THREE.Mesh(new THREE.CylinderGeometry(dentro, dentro, STEP, 160, 1, true),
+        new THREE.MeshStandardMaterial({ color: c.clone().multiplyScalar(scuro * 0.55), roughness: 0.95, side: THREE.DoubleSide }));
+      parete.position.y = Y(k) - STEP / 2; parete.userData.k = k; scene.add(parete); pickables.push(parete);
+      const bordo = new THREE.Mesh(new THREE.TorusGeometry(R(k), 0.05, 8, 200), new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.55 }));
+      bordo.rotation.x = Math.PI / 2; bordo.position.y = Y(k) + 0.02; bordo.userData.k = k; scene.add(bordo); rims.push(bordo);
+      const el = document.createElement("button");
+      el.className = "lab ring"; el.tabIndex = -1; el.innerHTML = `<b>${CERCHI[k].n}</b><span>${CERCHI[k].nome}</span>`;
+      el.onclick = () => seleziona(k, true); labels.appendChild(el); labRing.push(el);
+    }
+    // il pozzo e l'asse della risalita
+    pozzo = new THREE.Mesh(new THREE.SphereGeometry(0.42, 32, 16), new THREE.MeshBasicMaterial({ color: 0xFFC845 }));
+    pozzo.position.y = Y_POZZO; scene.add(pozzo);
+    const asse = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, Math.abs(Y_POZZO) + 3, 8), new THREE.MeshBasicMaterial({ color: 0xFFC845, transparent: true, opacity: 0.22 }));
+    asse.position.y = (Y_POZZO + 3) / 2; scene.add(asse);
+    // le stelle
+    const n = 2200, pos = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {   // più fitte verso l'orizzonte
+      const u = Math.random() * 2 * Math.PI, cv = Math.pow(Math.random(), 1.8) - 0.06, sv = Math.sqrt(1 - cv * cv), r = 80 + Math.random() * 60;
+      pos[3 * i] = r * sv * Math.cos(u); pos[3 * i + 1] = r * cv - 4; pos[3 * i + 2] = r * sv * Math.sin(u);
+    }
+    const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    stelle = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xFFF3CC, size: 0.8, transparent: true, opacity: 0.5, fog: false }));
+    scene.add(stelle);
+    stato.angolo = cam.theta + Math.PI;
+    preparaOrbs();
+    controlli();
+    ridimensiona();
+    new ResizeObserver(ridimensiona).observe(stage);
+    requestAnimationFrame(ciclo);
+    return true;
+  }
+
+  function ridimensiona() {
+    const w = stage.clientWidth, h = stage.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+    fattore = Math.pow(Math.min(1.6, Math.max(1, 1.05 / camera.aspect)), 0.85);   // su schermi stretti la telecamera si allontana
+  }
+
+  // --- i token come sfere di luce (in coordinate del corteo: il lato lontano è l'angolo 0) ---
+  function preparaOrbs() {
+    orbs.forEach((o) => { corteo.remove(o.mesh); o.mesh.material.dispose(); o.el.remove(); }); orbs.length = 0;
+    stato.token.forEach((t, i) => {
+      const m = new THREE.Mesh(geoOrb, new THREE.MeshStandardMaterial({ color: 0xFFF3CC, emissive: 0xFFC845, emissiveIntensity: 0.8, transparent: true }));
+      corteo.add(m);
+      const el = document.createElement("div"); el.className = "lab tok"; el.textContent = t; labels.appendChild(el);
+      orbs.push({ mesh: m, el, tinta: new THREE.Color().setHSL((0.11 + i * 0.16) % 1, 0.85, 0.62), nascosto: false });
+    });
+    posizionaOrbs(0);
+  }
+  function posOrb(i, k) {
+    const n = orbs.length;
+    if (k === N - 1 && i === n - 1) return new THREE.Vector3(0, Y(N - 1) - 0.15, 0);   // l'ultimo token scende nel pozzo
+    const r = midR(k), sp = Math.min(0.55, 1.35 / r), a = (i - (n - 1) / 2) * sp;
+    return new THREE.Vector3(r * Math.cos(a), Y(k) + 0.32, r * Math.sin(a));
+  }
+  function posizionaOrbs(s) {   // s continuo: 0 = la porta, 8 = il fondo; tra due cerchi i token saltano il gradino
+    sPos = s;
+    const k = Math.min(N - 1, Math.floor(s + 1e-9)), f = s - k;
+    orbs.forEach((o, i) => {
+      const p = posOrb(i, k);
+      if (f > 1e-6 && k < N - 1) { p.lerp(posOrb(i, k + 1), f); p.y += Math.sin(f * Math.PI) * 0.35; }
+      o.mesh.position.copy(p);
+    });
+    tingi(s);
+  }
+  function tingi(s) {   // prima tutti uguali (numeri), poi ognuno il suo colore (vettori), poi si mescolano con il contesto
+    const media = new THREE.Color(0, 0, 0), n = orbs.length;
+    orbs.forEach((o) => media.add(o.tinta)); media.multiplyScalar(1 / Math.max(1, n));
+    orbs.forEach((o, i) => {
+      const c = SOLE.clone().lerp(o.tinta, Math.min(1, s));
+      c.lerp(media, Math.min(0.75, Math.max(0, (s - 1) * 0.15)));
+      o.mesh.material.emissive.copy(c); o.mesh.material.color.copy(c).lerp(BIANCO, 0.4);
+      let op = 1;
+      if (i < n - 1 && s > 6) op = s <= 7 ? 1 - 0.75 * (s - 6) : 0.25 * (8 - s);   // al fondo conta solo l'ultimo token
+      o.mesh.material.opacity = op; o.mesh.visible = op > 0.02;
+      o.nascosto = op < 0.1; o.el.classList.toggle("dim", op < 0.6);
+    });
+  }
+  function pulisciArchi() { archi.forEach((a) => { corteo.remove(a); a.geometry.dispose(); a.material.dispose(); }); archi = []; }
+  function disegnaArchi(k) {
+    pulisciArchi();
+    if ((k !== 2 && k !== 3) || orbs.length < 2) return;
+    const n = orbs.length, ctx = stato.token, ultimo = orbs[n - 1].mesh.position, poco = (x) => x / Math.max(1, n - 2);
+    const teste = k === 2 ? [[attenzione(ctx), 0x7FE8FF]] : [
+      [ctx.map((_, j) => (j === n - 2 ? 0.8 : poco(0.2))), 0x39C9AE],      // la parola precedente
+      [ctx.map((t) => (t === "felicità" ? 0.85 : poco(0.15))), 0x6FC3FF],  // «felicità»
+      [ctx.map((_, j) => (j === 0 ? 0.7 : poco(0.3))), 0xB9A6FF]];          // l'inizio della frase
+    teste.forEach(([w, col], h) => ctx.forEach((_, j) => {
+      if (j === n - 1) return;
+      const a = ultimo.clone(), b = orbs[j].mesh.position.clone(), mid = a.clone().lerp(b, 0.5);
+      mid.y += 0.7 + 0.4 * h + 1.3 * w[j];
+      const tubo = new THREE.Mesh(new THREE.TubeGeometry(new THREE.QuadraticBezierCurve3(a, mid, b), 40, 0.03 + 0.11 * w[j], 8, false),
+        new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.45 + 0.55 * w[j] }));
+      corteo.add(tubo); archi.push(tubo);
+    }));
+  }
+  // --- le barre delle probabilità, al fondo ---
+  function pulisciBarre() {
+    barre.forEach((b) => { corteo.remove(b.mesh); b.mesh.material.dispose(); b.el.remove(); }); barre = [];
+    if (labRing.length) labRing[N - 1].hidden = false;
+  }
+  function mostraBarre(vincitore) {
+    pulisciBarre();
+    const { p } = passoCorrente(), rb = R(N - 1) - 0.55, sp = 0.5;
+    p.cand.forEach(([w], i) => {
+      const a = POSTI[i] * sp, m = new THREE.Mesh(geoBarra, new THREE.MeshStandardMaterial({ color: 0xFFC845, emissive: 0xFF8A3D, emissiveIntensity: 0.45, transparent: true }));
+      m.position.set(rb * Math.cos(a), Y(N - 1), rb * Math.sin(a)); m.scale.y = 0.01; corteo.add(m);
+      const el = document.createElement("div"); el.className = "lab prob"; labels.appendChild(el);
+      barre.push({ mesh: m, el, w, h: 0.01, meta: 0.01 });
+    });
+    labRing[N - 1].hidden = true;   // l'etichetta del cerchio IX lascerebbe poco spazio alle barre
+    aggiornaBarre3D(); if (vincitore) segnaVincitore();
+  }
+  function aggiornaBarre3D() {
+    if (!barre.length) return;
+    const { p } = passoCorrente(), pr = softmax(p.cand.map((c) => c[1]), stato.T);
+    barre.forEach((b, i) => { b.meta = 0.12 + 3.4 * pr[i]; b.el.innerHTML = `${mostra(b.w)} <b>${pct(pr[i])}</b>`; });
+  }
+  function segnaVincitore() {
+    const { p } = passoCorrente(), best = argmax(softmax(p.cand.map((c) => c[1]), stato.T));
+    barre.forEach((b, i) => { const m = b.mesh.material; b.el.classList.toggle("top", i === best);
+      m.color.set(i === best ? 0xD9541E : 0xFFC845); m.emissive.set(i === best ? 0xFF5A36 : 0xFF8A3D); m.emissiveIntensity = i === best ? 0.4 : 0.35; });
+    return best;
+  }
+
+  // --- evidenziare, volare, spostare il corteo ---
+  function evidenzia(k) {
+    rims.forEach((r, i) => (r.material.opacity = i === k ? 1 : 0.5));
+    terrazze.forEach((t, i) => (t.material.emissiveIntensity = i === k ? 0.2 : 0.05));
+    labRing.forEach((el, i) => el.classList.toggle("on", i === k));
+  }
+  function suolo(r) {   // l'altezza del gradino che sta sotto il raggio r
+    for (let k = 0; k < N; k++) if (r >= (k < N - 1 ? R(k + 1) : R_POZZO)) return Y(k);
+    return Y(N - 1) - STEP;
+  }
+  function libera(rr, phi, ty, off) {   // la telecamera non entra nella roccia e vede ciò che guarda
+    const cs = -off + rr * Math.sin(phi), cy = ty + rr * Math.cos(phi);
+    if (Math.abs(cs) >= R(0) + 0.3) return true;   // fuori dall'imbuto: lo si guarda da fuori
+    for (let i = 0; i <= 48; i++) {
+      const t = i / 48, sv = Math.abs(cs + (-off - cs) * t), y = cy + (ty - cy) * t;
+      if (sv < R(0) && y < suolo(sv) + (i === 0 ? 0.6 : 0.25)) return false;
+    }
+    return true;
+  }
+  function phiSicuro(rr, phi, ty, off) { while (phi > 0.12 && !libera(rr, phi, ty, off)) phi -= 0.02; return phi; }
+  function inquadra(k) {   // ci si affaccia sul cerchio k dal lato vicino, guardando il lato lontano
+    if (k < 0 || k > N - 1) return Object.assign({}, VISTA);
+    const g = { phi: 1.0 - 0.03 * k, radius: 8.5 + R(k) * 0.85, ty: Y(k) + 0.4, off: 0.62 * midR(k) };
+    g.phi = phiSicuro(g.radius * fattore, g.phi, g.ty, g.off);
+    return g;
+  }
+  function volaA(k) { cam.goal = inquadra(k); if (RID) Object.assign(cam, cam.goal); }
+  function vaiA(k) {   // fuori dal viaggio: i token scendono (o risalgono) fino al cerchio scelto e si fermano lì
+    const dest = k < 0 || k > 8 ? 0 : k;
+    pulisciArchi(); if (dest !== N - 1) pulisciBarre();
+    if (RID || Math.abs(dest - sPos) < 1e-6) { posizionaOrbs(dest); arrivato(dest); return; }
+    glide = { da: sPos, a: dest, t: 0, durata: Math.min(1.6, 0.35 + 0.15 * Math.abs(dest - sPos)) };
+  }
+  function arrivato(k) { disegnaArchi(k); if (k === N - 1 && !barre.length) mostraBarre(true); }
+
+  // --- controlli: trascinare, avvicinarsi, toccare ---
+  function controlli() {
+    const punti = new Map(); let pinch = 0, mosso = 0;
+    stage.addEventListener("pointerdown", (e) => {
+      if (e.target.closest("button")) return;
+      stage.setPointerCapture(e.pointerId); punti.set(e.pointerId, { x: e.clientX, y: e.clientY }); mosso = 0; ultimoTocco = performance.now();
+      if (punti.size === 2) { const [a, b] = [...punti.values()]; pinch = Math.hypot(a.x - b.x, a.y - b.y); }
+    });
+    stage.addEventListener("pointermove", (e) => {
+      if (!punti.has(e.pointerId)) return;
+      const prev = punti.get(e.pointerId), dx = e.clientX - prev.x, dy = e.clientY - prev.y;
+      punti.set(e.pointerId, { x: e.clientX, y: e.clientY }); mosso += Math.abs(dx) + Math.abs(dy); ultimoTocco = performance.now();
+      if (punti.size === 1) {
+        cam.theta += dx * 0.008; cam.phi = Math.min(1.42, Math.max(0.2, Math.min(cam.phi, cam.phiVisto + 0.02) - dy * 0.006)); cam.goal.phi = cam.phi;
+      } else if (punti.size === 2) {
+        const [a, b] = [...punti.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (pinch && d) { cam.radius = Math.min(45, Math.max(6, cam.radius * pinch / d)); cam.goal.radius = cam.radius; } pinch = d;
+      }
+    });
+    const fine = (e) => {
+      if (punti.has(e.pointerId) && punti.size === 1 && mosso < 6) tocca(e);
+      punti.delete(e.pointerId); if (punti.size < 2) pinch = 0;
+    };
+    stage.addEventListener("pointerup", fine);
+    stage.addEventListener("pointercancel", (e) => { punti.delete(e.pointerId); pinch = 0; });
+    stage.addEventListener("wheel", (e) => { e.preventDefault(); cam.radius = Math.min(45, Math.max(6, cam.radius * Math.exp(e.deltaY * 0.0012))); cam.goal.radius = cam.radius; ultimoTocco = performance.now(); }, { passive: false });
+    stage.addEventListener("keydown", (e) => {
+      if (e.target !== stage) return;
+      const tasti = { ArrowLeft: () => (cam.theta -= 0.15), ArrowRight: () => (cam.theta += 0.15),
+        ArrowDown: () => seleziona(Math.min(8, cerchio + 1), true), ArrowUp: () => seleziona(Math.max(-1, Math.min(8, cerchio) - 1), true),
+        "+": () => (cam.goal.radius = cam.radius = Math.max(6, cam.radius * 0.88)), "-": () => (cam.goal.radius = cam.radius = Math.min(45, cam.radius * 1.12)) };
+      if (tasti[e.key]) { e.preventDefault(); tasti[e.key](); ultimoTocco = performance.now(); }
+    });
+  }
+  function tocca(e) {
+    const r = canvas.getBoundingClientRect(), v = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    raycaster.setFromCamera(v, camera);
+    const hit = raycaster.intersectObjects(pickables.concat(rims), false)[0];
+    if (hit) seleziona(hit.object.userData.k, true);
+  }
+
+  // --- il viaggio: discesa (con una sosta a ogni cerchio), fondo, risalita ---
+  const FRASI = (k) => {
+    const ctx = stato.token, last = ctx[ctx.length - 1], att = attenzione(ctx);
+    return ["La porta: «" + testo(ctx) + "» entra come " + ctx.length + " token.",
+      "Embedding: ogni token diventa un vettore di d numeri, qui un colore.",
+      "Attenzione: «" + last + "» guarda soprattutto «" + ctx[argmax(att.slice(0, -1))] + "».",
+      "Molte teste: ogni testa cerca una relazione diversa.",
+      "La rete: ogni token passa da solo nell'MLP.",
+      "Il fiume residuo: ogni blocco aggiunge, non sostituisce.",
+      "Strato dopo strato: il blocco si ripete L volte.",
+      "Ritorno alle parole: resta solo «" + last + "», che dà un punteggio a ogni parola.",
+      "Il fondo: la softmax trasforma i punteggi in probabilità."][k];
+  };
+  function genera() {
+    if (stato.animazione) { stato.animazione.vel = 4; return; }   // il bottone, durante il viaggio, accelera
+    if (stato.finito) { ricomincia(); return; }
+    if (!scena) { generaSenza3D(); return; }
+    glide = null; pulisciBarre(); pulisciArchi(); posizionaOrbs(0);
+    orbs.forEach((o) => o.el.classList.remove("nuovo"));
+    labels.classList.add("viaggio");
+    $("genera").textContent = "Più veloce";
+    stato.animazione = { fase: "sosta", k: 0, t: 0, durata: DUR.sosta(0), vel: 1 };
+    annuncia(0);
+  }
+  function annuncia(k) {
+    $("now").textContent = FRASI(k); evidenzia(k); segnaQui(k); disegnaArchi(k);
+    if (!RID) cam.goal = inquadra(k);
+  }
+  function avanza(dt) {
+    const A = stato.animazione; if (!A) return;
+    A.t += (dt * A.vel * velTest) / A.durata;
+    if (A.fase === "sosta") {
+      if (A.t >= 1) { pulisciArchi(); Object.assign(A, { fase: "scendi", t: 0, durata: DUR.scendi }); }
+    } else if (A.fase === "scendi") {
+      posizionaOrbs(A.k + Math.min(1, A.t));
+      if (A.t >= 1) {
+        A.k += 1; posizionaOrbs(A.k); annuncia(A.k);
+        if (A.k === N - 1) { Object.assign(A, { fase: "fondo", t: 0, durata: DUR.fondo, vinto: false }); mostraBarre(false); if (cerchio === 8) chiosa(8); }
+        else Object.assign(A, { fase: "sosta", t: 0, durata: DUR.sosta(A.k) });
+      }
+    } else if (A.fase === "fondo") {
+      const { p } = passoCorrente();
+      if (!A.vinto && A.t >= 0.55) {
+        A.vinto = true; stato.scelto = segnaVincitore();
+        const pr = softmax(p.cand.map((c) => c[1]), stato.T);
+        $("now").textContent = `Il fondo: vince «${mostra(p.cand[stato.scelto][0])}», con il ${pct(pr[stato.scelto])}.`;
+      }
+      if (A.t >= 1) {
+        const parola = p.cand[stato.scelto][0];
+        orbs.forEach((o) => { o.mesh.visible = false; o.nascosto = true; });
+        stella = new THREE.Mesh(new THREE.SphereGeometry(0.34, 24, 12), new THREE.MeshBasicMaterial({ color: 0xFFC845 }));
+        stella.position.set(0, Y_POZZO, 0); scene.add(stella);
+        stellaEl = document.createElement("div"); stellaEl.className = "lab tok nuovo"; stellaEl.textContent = mostra(parola); labels.appendChild(stellaEl);
+        Object.assign(A, { fase: "risali", t: 0, durata: DUR.risali });
+        $("now").textContent = "Risale «" + mostra(parola) + "»: la nuova parola torna alla porta.";
+        if (!RID) cam.goal = { phi: 0.95, radius: 27, ty: -3.6, off: 0 };
+      }
+    } else if (A.fase === "risali") {
+      const t = Math.min(1, A.t), e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      stella.position.y = Y_POZZO + e * (Y(0) + 1.6 - Y_POZZO);
+      barre.forEach((b) => { b.mesh.material.opacity = 1 - 0.85 * t; b.el.style.opacity = String(1 - t); });
+      if (A.t >= 1) concludi();
+    }
+  }
+  function aggiungi(parola) {   // la parola scelta entra nella frase
+    stato.token.push(parola); stato.passo++; stato.finito = stato.passo >= PASSI.length;
+    frase();
+    if (stato.finito) {
+      $("now").textContent = "«E quindi uscimmo a riveder le stelle.» La frase è finita: «" + testo(stato.token) + "»";
+      $("genera").textContent = "Ricomincia"; stelleAccese = true;
+      if (scena && !RID) cam.goal = { phi: 1.45, radius: 24, ty: 4, off: 0 };   // si alza lo sguardo: le stelle
+    } else {
+      $("now").textContent = "Nuova parola: «" + mostra(parola) + "». Si ricomincia dalla porta.";
+      $("genera").textContent = "Prossima parola";
+    }
+    if (cerchio >= 0) chiosa(cerchio);
+  }
+  function concludi() {
+    const parola = passoCorrente().p.cand[stato.scelto][0];
+    if (stella) { scene.remove(stella); stella.geometry.dispose(); stella = null; stellaEl.remove(); stellaEl = null; }
+    stato.animazione = null; pulisciBarre(); pulisciArchi(); labels.classList.remove("viaggio"); segnaQui(-9);
+    aggiungi(parola);
+    preparaOrbs(); orbs[orbs.length - 1].el.classList.add("nuovo");
+    evidenzia(cerchio);
+  }
+  function generaSenza3D() {
+    const { p } = passoCorrente();
+    stato.scelto = argmax(softmax(p.cand.map((c) => c[1]), stato.T));
+    aggiungi(p.cand[stato.scelto][0]);
+  }
+  function ricomincia() {
+    stato.token = INIZIO.slice(); stato.passo = 0; stato.finito = false; stelleAccese = false;
+    $("genera").textContent = "Prossima parola"; frase();
+    if (scena) { glide = null; pulisciBarre(); pulisciArchi(); preparaOrbs(); volaA(cerchio); if (cerchio >= 0 && cerchio <= 8) vaiA(cerchio); }
+    $("now").textContent = "Pronto: «La felicità è…» aspetta alla porta.";
+    if (cerchio >= 0) chiosa(cerchio);
+  }
+
+  // --- il ciclo di disegno ---
+  let tPrima = performance.now();
+  let vp = null;   // vettore di servizio per le etichette
+  function proietta(p, el, ancora, larg) {
+    vp.copy(p).project(camera);
+    const w = stage.clientWidth, h = stage.clientHeight, y = (-vp.y * 0.5 + 0.5) * h;
+    let x = (vp.x * 0.5 + 0.5) * w;
+    if (larg) x = Math.min(w - larg / 2 - 6, Math.max(larg / 2 + 6, x));   // le etichette dei cerchi restano dentro la scena
+    const vis = vp.z < 1 && x > -80 && x < w + 80 && y > -40 && y < h + 40;
+    el.style.visibility = vis ? "visible" : "hidden";
+    el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) ${ancora || "translate(-50%, -100%)"}`;
+  }
+  function ciclo(now) {
+    const dt = Math.min(0.05, Math.max(0, (now - tPrima) / 1000)); tPrima = now;
+    if (autoRuota && !stato.animazione && now - ultimoTocco > 5000) cam.theta += dt * 0.09;
+    const f = RID ? 1 : 1 - Math.pow(0.0015, dt);
+    ["phi", "radius", "ty", "off"].forEach((q) => (cam[q] += (cam.goal[q] - cam[q]) * f));
+    const rr = cam.radius * fattore, phi = (cam.phiVisto = phiSicuro(rr, cam.phi, cam.ty, cam.off));
+    const ct = Math.cos(cam.theta), st = Math.sin(cam.theta), lx = -cam.off * ct, lz = -cam.off * st;
+    camera.position.set(lx + rr * Math.sin(phi) * ct, cam.ty + rr * Math.cos(phi), lz + rr * Math.sin(phi) * st);
+    camera.lookAt(lx, cam.ty, lz); camera.updateMatrixWorld();
+    // il corteo dei token si tiene sempre sul lato lontano, di fronte a chi guarda
+    const meta = cam.theta + Math.PI, dA = Math.atan2(Math.sin(meta - stato.angolo), Math.cos(meta - stato.angolo));
+    stato.angolo += RID ? dA : dA * Math.min(1, dt * 2.2);
+    corteo.rotation.y = -stato.angolo;
+    if (glide && !stato.animazione) {
+      glide.t += (dt * velTest) / glide.durata;
+      const t = Math.min(1, glide.t), e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      posizionaOrbs(glide.da + (glide.a - glide.da) * e);
+      if (t >= 1) { const k = glide.a; glide = null; arrivato(k); }
+    }
+    avanza(dt);
+    const fb = RID ? 1 : 1 - Math.pow(0.004, dt);
+    barre.forEach((b) => { b.h += (b.meta - b.h) * fb; b.mesh.scale.y = b.h; b.mesh.position.y = Y(N - 1) + b.h / 2; });
+    stelle.rotation.y += dt * 0.004;
+    stelle.material.opacity += ((stelleAccese ? 1 : 0.5) - stelle.material.opacity) * Math.min(1, dt * 1.5);
+    stelle.material.size = stelleAccese ? 1.35 + (RID ? 0 : 0.2 * Math.sin(now / 400)) : 0.8;
+    if (!RID) pozzo.scale.setScalar(1 + 0.08 * Math.sin(now / 350));
+    scene.updateMatrixWorld();
+    // etichette: i cerchi sul lato lontano a destra, i token sopra le sfere, le probabilità sopra le barre
+    const a = cam.theta + Math.PI + 1.05;
+    const lw = labRing.map((el) => el.offsetWidth), bm = barre.map((b) => [b.el.offsetWidth, b.el.offsetHeight]);   // prima si misura, poi si sposta
+    labRing.forEach((el, k) => proietta(new THREE.Vector3(R(k) * Math.cos(a), Y(k) + 0.12, R(k) * Math.sin(a)), el, "translate(-50%, -50%)", lw[k]));
+    let px = -1e9, pw = 0, pSu = false;
+    orbs.forEach((o) => {
+      if (o.nascosto) { o.el.style.visibility = "hidden"; return; }
+      const c = o.mesh.getWorldPosition(new THREE.Vector3()), x = (c.clone().project(camera).x * 0.5 + 0.5) * stage.clientWidth;
+      const w = o.larg || (o.larg = o.el.offsetWidth || 40), su = !(pSu && Math.abs(x - px) < (w + pw) / 2 + 3);
+      if (su) proietta(c.clone().add(new THREE.Vector3(0, 0.36, 0)), o.el);
+      else proietta(c.clone().add(new THREE.Vector3(0, -0.36, 0)), o.el, "translate(-50%, 0)");
+      px = x; pw = w; pSu = su;
+    });
+    const messe = [];   // le etichette delle barre non si coprono: dalla più probabile in giù, chi urta sale
+    barre.forEach((b, i) => {
+      vp.copy(corteo.localToWorld(new THREE.Vector3(b.mesh.position.x, Y(N - 1) + b.h + 0.12, b.mesh.position.z))).project(camera);
+      const x = (vp.x * 0.5 + 0.5) * stage.clientWidth, [w, h] = bm[i]; let y = (-vp.y * 0.5 + 0.5) * stage.clientHeight;
+      for (let giro = 0; giro < 6; giro++) {
+        const urto = messe.find((m) => Math.abs(m.x - x) < (m.w + w) / 2 + 2 && y > m.y - m.h - 2 && y - h < m.y + 2);
+        if (!urto) break; y = urto.y - urto.h - 3;
+      }
+      messe.push({ x, y, w, h });
+      b.el.style.visibility = vp.z < 1 ? "visible" : "hidden";
+      b.el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -100%)`;
+    });
+    if (stella) proietta(stella.position.clone().add(new THREE.Vector3(0, 0.45, 0)), stellaEl);
+    renderer.render(scene, camera);
+    requestAnimationFrame(ciclo);
+  }
+
+  // --- avvio ---
+  chipNav(); frase();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => orbs.forEach((o) => (o.larg = 0)));
+  try { if (!window.THREE) throw new Error("three.js non caricato"); scena = costruisci(); }
+  catch (err) { scena = false; $("fallback").hidden = false; $("ruota").disabled = $("alto").disabled = true; console.warn(err); }
+  seleziona(-1, false);
+  $("genera").onclick = genera;
+  $("alto").onclick = () => { cam.goal = { phi: 0.34, radius: 30, ty: -5, off: 0 }; ultimoTocco = performance.now(); if (RID) Object.assign(cam, cam.goal); };
+  $("ruota").onclick = (e) => { autoRuota = !autoRuota; e.currentTarget.setAttribute("aria-pressed", String(autoRuota)); };
+  if (RID) $("ruota").setAttribute("aria-pressed", "false");
+  window.__imbuto = { stato, genera, seleziona, veloce: (v) => (velTest = v), cam, webgl: !!scena };   // per i test automatici
+})();
+</script>
+</body>
+</html>
