@@ -1,6 +1,6 @@
 # Machine Learning for the Humanities
 
-**Corso di laurea magistrale · Università di Roma Tor Vergata · novembre 2026**
+**Corso di laurea magistrale Università di Roma Tor Vergata, novembre 2026**
 
 
 ## Programma
