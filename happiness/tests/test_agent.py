@@ -5,15 +5,20 @@
 
 from __future__ import annotations
 
+import re
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
 
 import anthropic
 
 from happiness.agent import FALLBACK_BETA, Agent, Settings, describe_error
+from happiness.corpus import Corpus
+from happiness.sandbox import LocalSandbox, ask_before_running
 from happiness.tests import fakeapi as api
+from happiness.tests.corpusfix import make_corpus
+
+CORPUS_TOOLS = ["catalogue", "count", "concordance", "read", "run_python", "memory", "str_replace_based_edit_tool", "load_skill"]
 
 
 class AgentTests(unittest.TestCase):
@@ -21,21 +26,29 @@ class AgentTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.home = Path(tmp.name)
-        self.settings = Settings(home=self.home)
+        root = make_corpus(self.home)
+        self.settings = Settings(corpus=root, home=self.home / "happiness", passages=2_000)
+        self.corpus = Corpus(root, self.settings.index_dir)
+        self.addCleanup(self.corpus.close)
+        self.corpus.update()
         self.events: list[tuple[str, str]] = []
 
-    def agent(self, *replies: bytes, **kwargs: Any) -> tuple[Agent, api.ScriptedAPI]:
+    def agent(self, *replies: bytes) -> tuple[Agent, api.ScriptedAPI]:
         script = api.ScriptedAPI(*replies)
-        return Agent(self.settings, client=script.client(), **kwargs), script
+        sandbox = LocalSandbox(self.corpus.root, approve=None)
+        return Agent(self.settings, client=script.client(), corpus=self.corpus, sandbox=sandbox), script
 
     def ask(self, agent: Agent, text: str) -> str:
         return agent.ask(text, on_event=lambda kind, payload: self.events.append((kind, payload)))
 
+    def notebook(self, agent: Agent) -> str:
+        assert agent.lab.session is not None
+        return (agent.lab.session / "notebook.md").read_text(encoding="utf-8")
+
     def test_answers_and_sends_a_well_formed_request(self) -> None:
-        agent, script = self.agent(api.reply(api.thinking(), api.text("Hello there.")))
-        self.assertEqual(self.ask(agent, "Hi"), "Hello there.")
+        agent, script = self.agent(api.reply(api.thinking(), api.text("Five texts, five languages.")))
+        self.assertEqual(self.ask(agent, "What is in my corpus?"), "Five texts, five languages.")
         self.assertIn(("thinking", ""), self.events)
-        self.assertIn(("text", "Hello there."), self.events)
 
         sent = script.requests[0]
         self.assertEqual(sent["model"], "claude-opus-5-5")
@@ -45,62 +58,63 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(sent["cache_control"], {"type": "ephemeral"})
         self.assertEqual(sent["system"][0]["cache_control"], {"type": "ephemeral"})
         self.assertIn(FALLBACK_BETA, script.headers[0]["anthropic-beta"])
-        self.assertEqual(
-            [tool["name"] for tool in sent["tools"]],
-            ["web_search", "web_fetch", "memory", "str_replace_based_edit_tool", "load_skill"],
-        )
-        self.assertTrue(sent["tools"][-1]["eager_input_streaming"])
-        self.assertIn("- happiness-lexicon: A cross-linguistic lexicon", sent["system"][0]["text"])
-        self.assertEqual([m["role"] for m in agent.messages], ["user", "assistant"])
+        self.assertEqual([tool["name"] for tool in sent["tools"]], CORPUS_TOOLS)
+        system = sent["system"][0]["text"]
+        for expected in ("5 texts", "Columns of `texts`: id, name, author, year, prize, title, anno, language", "- felicita-it: 35 terms in 6 categories",
+                         "- happiness-lexicon: A cross-linguistic lexicon", "a budget of 2,000 characters per conversation"):
+            self.assertIn(expected, system)
+        notebook = self.notebook(agent)
+        self.assertIn("You asked\n\nWhat is in my corpus?", notebook)
+        self.assertIn("Happiness answered\n\nFive texts, five languages.", notebook)
 
-    def test_runs_a_tool_and_keeps_the_history_append_only(self) -> None:
+    def test_counts_and_keeps_the_history_append_only(self) -> None:
         agent, script = self.agent(
-            api.reply(api.thinking(), api.tool_use("toolu_1", "load_skill", {"name": "happiness-lexicon"}), stop_reason="tool_use"),
-            api.reply(api.text("Try *Vorfreude*.")),
+            api.reply(api.thinking(), api.tool_use("toolu_1", "count", {"lexicon": "felicita-it", "segments": 10}), stop_reason="tool_use"),
+            api.reply(api.text("The novella carries almost all of it.")),
         )
-        self.assertEqual(self.ask(agent, "A word for looking forward to something?"), "Try *Vorfreude*.")
-        self.assertIn(("tool", "loading the happiness-lexicon skill"), self.events)
-
+        self.assertEqual(self.ask(agent, "Where is the happiness?"), "The novella carries almost all of it.")
+        self.assertIn(("tool", "counting felicita-it, 10 segments"), self.events)
         first, second = script.requests
-        self.assertEqual([m["role"] for m in second["messages"]], ["user", "assistant", "user"])
         self.assertEqual(second["messages"][: len(first["messages"])], first["messages"])
         self.assertEqual((first["system"], first["tools"]), (second["system"], second["tools"]))
-        thinking = second["messages"][1]["content"][0]
-        self.assertEqual((thinking["type"], thinking["signature"]), ("thinking", "c2lnbmF0dXJl"))
         result = second["messages"][2]["content"][0]
         self.assertEqual(result["tool_use_id"], "toolu_1")
-        self.assertIn("Vorfreude", result["content"])
-        self.assertNotIn("is_error", result)
+        self.assertIn("Counted the felicita-it lexicon in 5 texts", result["content"])
+        assert agent.lab.session is not None
+        self.assertTrue((agent.lab.session / "tables" / "01-count-the-felicita-it-lexicon.csv").is_file())
+        self.assertIn("**count** the felicita-it lexicon", self.notebook(agent))
 
-    def test_edits_files_in_the_workspace(self) -> None:
-        agent, _ = self.agent(
-            api.reply(api.tool_use("toolu_1", "str_replace_based_edit_tool", {"command": "create", "path": "notes/todo.md", "file_text": "- buy bread\n"}), stop_reason="tool_use"),
-            api.reply(api.tool_use("toolu_2", "str_replace_based_edit_tool", {"command": "str_replace", "path": "notes/todo.md", "old_str": "bread", "new_str": "flowers"}), stop_reason="tool_use"),
-            api.reply(api.text("Noted.")),
+    def test_the_passage_budget_lasts_a_conversation(self) -> None:
+        read = {"text": "novella", "position": 20, "length": 1500}
+        agent, script = self.agent(
+            api.reply(api.tool_use("toolu_1", "read", read), stop_reason="tool_use"),
+            api.reply(api.text("Read.")),
+            api.reply(api.tool_use("toolu_2", "read", read), stop_reason="tool_use"),
+            api.reply(api.text("Read again.")),
+            api.reply(api.tool_use("toolu_3", "read", read), stop_reason="tool_use"),
+            api.reply(api.text("Fresh budget.")),
         )
-        self.ask(agent, "Remind me to buy bread. No, flowers.")
-        self.assertEqual((self.home / "workspace/notes/todo.md").read_text(), "- buy flowers\n")
-        self.assertIn(("tool", "writing notes/todo.md"), self.events)
-
-    def test_remembers_across_conversations(self) -> None:
-        agent, _ = self.agent(
-            api.reply(api.tool_use("toolu_1", "memory", {"command": "create", "path": "/memories/user.md", "file_text": "Teaches on Tuesdays.\n"}), stop_reason="tool_use"),
-            api.reply(api.text("I'll remember.")),
-        )
-        self.ask(agent, "I teach on Tuesdays.")
-        self.assertEqual((self.home / "memory/memories/user.md").read_text(), "Teaches on Tuesdays.\n")
+        self.ask(agent, "Read me something.")
+        self.ask(agent, "And more.")
+        second = script.requests[3]["messages"][-1]["content"][0]["content"]
+        left = int(re.search(r"([\d,]+) characters left in the passage budget", second).group(1).replace(",", ""))
+        self.assertLess(left, 50)  # 1,500 + about 500 of 2,000: passages end at word boundaries
+        first_session = agent.lab.session
+        agent.new_conversation()
+        self.ask(agent, "Start again.")
+        third = script.requests[5]["messages"][-1]["content"][0]["content"]
+        self.assertIn("characters left in the passage budget", third)
+        self.assertNotIn("is used up", third)
+        self.assertNotEqual(agent.lab.session, first_session)
 
     def test_resumes_a_paused_server_tool_turn(self) -> None:
+        self.settings.web = True
         agent, script = self.agent(
-            api.reply(
-                api.tool_use("srvtoolu_1", "web_search", {"query": "felicità"}, server=True),
-                api.search_results("srvtoolu_1"),
-                stop_reason="pause_turn",
-            ),
-            api.reply(api.text("Found it.")),
+            api.reply(api.tool_use("srvtoolu_1", "web_search", {"query": "Grazia Deledda"}, server=True), api.search_results("srvtoolu_1"), stop_reason="pause_turn"),
+            api.reply(api.text("Nobel 1926.")),
         )
-        self.assertEqual(self.ask(agent, "Search for felicità"), "Found it.")
-        self.assertIn(("tool", "searching the web for “felicità”"), self.events)
+        self.assertEqual(self.ask(agent, "When did Deledda win the Nobel?"), "Nobel 1926.")
+        self.assertEqual([t["name"] for t in script.requests[0]["tools"]][:2], ["web_search", "web_fetch"])
         second = script.requests[1]["messages"]
         self.assertEqual([m["role"] for m in second], ["user", "assistant"])
         self.assertEqual([b["type"] for b in second[1]["content"]], ["server_tool_use", "web_search_tool_result"])
@@ -114,21 +128,20 @@ class AgentTests(unittest.TestCase):
         self.ask(agent, "Hi")
         self.assertEqual(self.ask(agent, "Something declined"), "")
         self.assertEqual(len(agent.messages), 2)
-        notices = [payload for kind, payload in self.events if kind == "notice"]
-        self.assertIn("category: cyber", notices[0])
+        self.assertIn("category: cyber", [p for k, p in self.events if k == "notice"][0])
         self.ask(agent, "Something else")
-        third = script.requests[2]["messages"]
-        self.assertEqual([m["content"] for m in third if m["role"] == "user"], ["Hi", "Something else"])
+        self.assertEqual([m["content"] for m in script.requests[2]["messages"] if m["role"] == "user"], ["Hi", "Something else"])
+        self.assertIn("> That request was declined", self.notebook(agent))
 
     def test_a_tool_call_cut_off_by_max_tokens_is_not_run(self) -> None:
         agent, script = self.agent(
-            api.reply(api.tool_use("toolu_1", "str_replace_based_edit_tool", {"command": "create", "path": "long.md", "file_text": "Once upon"}), stop_reason="max_tokens"),
-            api.reply(api.text("I'll write it in parts.")),
+            api.reply(api.tool_use("toolu_1", "run_python", {"title": "x", "code": "open('ran', 'w')"}), stop_reason="max_tokens"),
+            api.reply(api.text("I'll do it in parts.")),
         )
-        self.ask(agent, "Write a long story to long.md")
-        self.assertFalse((self.home / "workspace/long.md").exists())
-        result = script.requests[1]["messages"][2]["content"][0]
-        self.assertTrue(result["is_error"])
+        self.ask(agent, "Analyse")
+        assert agent.lab.session is not None
+        self.assertFalse((agent.lab.session / "ran").exists())
+        self.assertTrue(script.requests[1]["messages"][2]["content"][0]["is_error"])
 
     def test_after_a_fallback_only_text_from_before_the_switch_goes_back(self) -> None:
         agent, script = self.agent(
@@ -140,23 +153,17 @@ class AgentTests(unittest.TestCase):
         echoed = script.requests[1]["messages"][1]["content"]
         self.assertEqual([(b["type"], b["text"]) for b in echoed], [("text", "Part one. "), ("text", "Part two.")])
 
-    def test_arguments_that_do_not_fit_the_schema_come_back_as_invalid_json(self) -> None:
+    def test_bad_arguments_and_garbled_json(self) -> None:
         agent, script = self.agent(
-            api.reply(api.tool_use("toolu_1", "load_skill", {"name": 42}), stop_reason="tool_use"),
-            api.reply(api.text("Let me try again.")),
+            api.reply(api.tool_use("toolu_1", "count", {"terms": "joy"}), stop_reason="tool_use"),
+            api.reply(api.tool_use("toolu_2", "catalogue", {}, raw="not json at all"), stop_reason="tool_use"),
+            api.reply(api.text("Done.")),
         )
-        self.ask(agent, "Load a skill")
+        self.assertEqual(self.ask(agent, "Count"), "Done.")
         result = script.requests[1]["messages"][2]["content"][0]
         self.assertTrue(result["is_error"])
         self.assertIn("INVALID_JSON", result["content"])
-
-    def test_unparseable_tool_json_is_asked_again(self) -> None:
-        agent, script = self.agent(
-            api.reply(api.tool_use("toolu_1", "load_skill", {}, raw="not json at all"), stop_reason="tool_use"),
-            api.reply(api.text("Here you are.")),
-        )
-        self.assertEqual(self.ask(agent, "Load a skill"), "Here you are.")
-        self.assertEqual(script.requests[0]["messages"], script.requests[1]["messages"])
+        self.assertEqual(script.requests[1]["messages"], script.requests[2]["messages"])  # the garbled turn was asked again
         self.assertTrue(any(kind == "notice" for kind, _ in self.events))
 
     def test_an_api_error_drops_the_exchange(self) -> None:
@@ -165,30 +172,13 @@ class AgentTests(unittest.TestCase):
             self.ask(agent, "Hi")
         self.assertEqual(agent.messages, [])
         self.assertIn("500", describe_error(caught.exception) or "")
+        self.assertIn("> Stopped: The Claude API returned an error (500)", self.notebook(agent))
 
-    def test_settings_shape_the_tools_and_request(self) -> None:
-        self.settings.web = False
-        self.settings.effort = "high"
-        agent, script = self.agent(api.reply(api.text("Ok.")))
-        self.ask(agent, "Hi")
-        sent = script.requests[0]
-        self.assertEqual([t["name"] for t in sent["tools"]], ["memory", "str_replace_based_edit_tool", "load_skill"])
-        self.assertEqual(sent["output_config"], {"effort": "high"})
-        self.assertNotIn("web_search", sent["system"][0]["text"])
+    def test_without_docker_scripts_wait_for_approval_by_default(self) -> None:
+        self.settings.sandbox = "local"
+        agent = Agent(self.settings, client=api.ScriptedAPI().client(), corpus=self.corpus)
+        self.assertIs(agent.toolbox.sandbox.approve, ask_before_running)
 
-    def test_new_conversation_starts_empty(self) -> None:
-        agent, _ = self.agent(api.reply(api.text("Ok.")))
-        self.ask(agent, "Hi")
-        agent.new_conversation()
-        self.assertEqual(agent.messages, [])
-
-    def test_rejects_an_unknown_effort(self) -> None:
-        self.settings.effort = "enormous"
-        with self.assertRaises(ValueError):
-            self.agent()
-
-
-class ErrorTests(unittest.TestCase):
     def test_missing_credentials_are_explained(self) -> None:
         error = TypeError("Could not resolve authentication method. Expected one of api_key, ...")
         self.assertIn("ANTHROPIC_API_KEY", describe_error(error) or "")

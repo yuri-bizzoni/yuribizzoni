@@ -1,20 +1,25 @@
 # Happiness
 
-A small agent you run yourself, for all sorts of everyday tasks, with a lexicon of happiness built in.
+A research assistant for your own corpus, running on your own machine, with a lexicon of happiness built in.
 
-Happiness talks to Claude (Opus 5.5 by default) and can:
+Point it at a folder of plain-text files and ask questions in plain language. Do happiness words rise towards
+the end of the Italian novels? Which authors write the longest sentences, and has that changed since 1850?
+How does Deledda use *letizia*? Happiness (Claude underneath) plans the analysis, measures with tools that run
+on your machine, checks a few passages, and answers with numbers you can trace back to a table, a script or a figure.
 
-- **search the web and read pages**, saying where its facts come from;
-- **remember you** between conversations, in a folder of plain notes on your machine;
-- **read your files** (text, PDFs, images) and **write or edit text files**, all inside one workspace folder;
-- **load skills**, folders of instructions it reads when a task calls for them. It ships with one: the
-  **happiness lexicon**, words for joy, contentment and longing in about twenty languages, with register,
-  etymology and literary loci, plus a cross-index that maps the stages of a research project to the kind of
-  happiness each one runs on (a gentle diagnostic when a project stalls);
-- **run shell commands**, if you allow it: terminal only, and you approve each command.
+What it adds to Claude in a chat window:
 
-You talk to it in a terminal, or in a small web chat that also works on a phone. It is a few short Python files
-with a single dependency, the Anthropic Python SDK.
+- **Corpora of any size.** Texts are indexed locally (SQLite full-text search), so a question about thousands of
+  novels doesn't need anything uploaded.
+- **The texts stay on your disk.** Claude sees counts, tables, figures and short passages. Passages draw on a budget
+  you set, 20,000 characters per conversation by default.
+- **Real analysis.** It writes and runs Python (pandas, scipy, scikit-learn, statsmodels, matplotlib) in a Docker
+  sandbox with no network and the corpus read-only.
+- **A lab notebook.** Each conversation gets a folder with every question, every tool call, the tables, the scripts
+  and the figures. Passages are logged by position, never copied.
+- **Happiness built in.** It has the `felicita-it` lexicon from the *Machine Learning for the Humanities* course,
+  and your happiness-lexicon skill for words in other languages. It can also build and check new lexicons, and save
+  them for next time.
 
 ## Start
 
@@ -29,160 +34,126 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 ```bash
-python -m happiness
+python -m happiness --corpus ~/corpora/novels
 ```
 
-That opens a conversation. `/new` starts afresh, `/exit` leaves, Ctrl-C stops a reply. Get an API key from the
-[Claude Console](https://console.anthropic.com).
+The first run indexes the corpus; later runs only re-index files that changed. Inside the chat, `/new` starts
+afresh, `/lab` shows the conversation's folder, `/budget` the passages left, and `/exit` leaves. Ctrl-C stops a reply.
 
-One request at a time works too. Text piped in is added to the request:
+Answering a single request works too:
 
 ```bash
-python -m happiness "Is there a word for the joy of watching students finally get it?"
+python -m happiness --corpus ~/corpora/novels "Compare sentence length across decades, by language"
 ```
 
-```bash
-cat chapter.txt | python -m happiness "Summarise this in five lines, in Italian"
-```
+With [Docker](https://docs.docker.com/get-docker/) running, analysis scripts go in the sandbox. Happiness builds its
+image the first time it needs it, which takes a few minutes. Without Docker, scripts run with your own Python, and
+Happiness shows you each one and asks first.
 
-```bash
-python -m happiness --workspace ~/Documents/thesis "Read draft.pdf and list the open questions"
-```
+## Your corpus
 
-```bash
-python -m happiness --shell "How many words are in each .txt file here?"
-```
+- **Texts:** `.txt` files anywhere under the folder (hidden folders are skipped). UTF-8, or Windows-1252/Latin-1
+  for older files. A Project Gutenberg licence around a text is removed.
+- **Metadata:** a `metadata.csv` (or `.tsv`) in the corpus folder, or any file given with `--metadata`, with one row
+  per text. Happiness finds the column holding the file names by itself (`it/novella.txt`, `it/novella` or
+  `novella` all work). Numbers are stored as numbers, so `year < 1900` works.
+- **Headers:** leading lines starting with `#` are read as a header: `# key: value` lines become metadata, and
+  `# Title — Author` gives the title and the author, as in the course texts.
+- **Statistics:** every text gets `language` (detected for Italian, English, Danish, German and French unless the
+  metadata says otherwise), `words`, `sentences`, `words_per_sentence`, `letters_per_word` and `sttr`
+  (standardised type-token ratio over 1,000-word windows). They are approximate: sentences are split at final
+  punctuation.
 
-## The web chat
+`python -m happiness index --corpus PATH` indexes without starting a conversation and shows what Happiness found.
 
-```bash
-python -m happiness serve
-```
+## What it can do
 
-Then open <http://localhost:8000>. Attach files with **+**; they are saved in the workspace's `uploads/` folder,
-where Happiness can read them. To serve beyond your own computer, set a password first: the server refuses to
-listen on another address without one.
+| Tool | What it does | Corpus text sent |
+|---|---|---|
+| `catalogue` | SQL over the catalogue table `texts`: metadata and statistics, one row per text | none |
+| `count` | Words, phrases, prefixes (`felic*`) or a lexicon, per text, per 10,000 words, per segment (arcs) and per group. Saves the full table | none |
+| `concordance` | Keyword in context, sampled evenly from all matches | each line, from the budget |
+| `read` | A passage of up to 1,500 characters | the passage, from the budget |
+| `run_python` | A script in the sandbox, with the catalogue, the texts and the tables at hand | what it prints (told to print numbers only) |
+| memory, lab editor, skills | Notes across conversations, the lab folder, the happiness lexicon skill | none |
 
-```bash
-HAPPINESS_PASSWORD='a long passphrase' python -m happiness serve --host 0.0.0.0
-```
+`--web` adds web search and fetch, for facts about authors and editions. Corpus text never goes into a query.
 
-The browser asks for it (any user name works). Anywhere outside your home network, put HTTPS in front, as below:
-the password travels with every request.
-
-## Deploy it
-
-### With Docker, on any machine
-
-```bash
-cd happiness
-```
-
-```bash
-docker build -t happiness .
-```
-
-```bash
-docker run -d --name happiness --restart unless-stopped -p 8000:8000 \
-  -e ANTHROPIC_API_KEY=sk-ant-... -e HAPPINESS_PASSWORD='a long passphrase' -e TZ=Europe/Copenhagen \
-  -v happiness-data:/data happiness
-```
-
-Memory, skills and the workspace live in the `happiness-data` volume, so they survive upgrades.
-
-### On a server with a domain name, with HTTPS
-
-[`compose.yaml`](compose.yaml) runs Happiness behind [Caddy](https://caddyserver.com), which gets and renews
-the certificate by itself. Point the domain at the server, open ports 80 and 443, and create a `.env` file next
-to `compose.yaml` (it is git-ignored):
-
-```
-ANTHROPIC_API_KEY=sk-ant-...
-HAPPINESS_PASSWORD=a long passphrase
-HAPPINESS_DOMAIN=happiness.example.org
-TZ=Europe/Copenhagen
-```
-
-```bash
-docker compose up -d --build
-```
-
-## Settings
-
-| Environment variable | Flag | Default | |
-|---|---|---|---|
-| `ANTHROPIC_API_KEY` | | | Your Claude API key (required) |
-| `HAPPINESS_MODEL` | `--model` | `claude-opus-5-5` | Any Claude model; `claude-sonnet-5-5` and `claude-haiku-5-5` cost less |
-| `HAPPINESS_EFFORT` | `--effort` | `medium` | How hard it thinks: `low`, `medium`, `high`, `xhigh`, `max` |
-| `HAPPINESS_HOME` | `--home` | `~/.happiness` | Where memory, your skills and the workspace live |
-| `HAPPINESS_WORKSPACE` | `--workspace` | `<home>/workspace` | The only folder it may read and write |
-| `HAPPINESS_WEB` | `--no-web` | on | Web search and web fetch |
-| `HAPPINESS_SHELL` | `--shell`, `--yes` | off | Shell commands, terminal only; `--yes` skips the approval |
-| `HAPPINESS_PASSWORD` | | | Required to serve the web chat beyond localhost |
-| `HAPPINESS_HOST`, `HAPPINESS_PORT` | `--host`, `--port` | `127.0.0.1`, `8000` | Where the web chat listens |
-| `TZ` | | the system's | The time zone behind "today" |
-
-Web search must be enabled for your organization in the Claude Console; if it isn't, turn the web tools off with
-`--no-web`. Each search is billed on top of the tokens.
-
-## Where your things live
+## The lab
 
 ```
 ~/.happiness/
-├── memory/memories/   what Happiness remembers about you: plain files you can read, edit or delete
-├── skills/            your own skills
-└── workspace/         the files it may read and write; uploads go to workspace/uploads/
+├── lab/
+│   ├── 2026-11-05_1432-does-happiness-rise-towards-the-end/
+│   │   ├── notebook.md        what you asked, every tool call, the answer
+│   │   ├── tables/            count tables and the tables scripts write
+│   │   ├── scripts/           every script that ran
+│   │   ├── figures/
+│   │   └── catalogue.csv      the catalogue as it was
+│   └── lexicons/              lexicons you or Happiness made (category,term per row)
+├── memory/                    what Happiness remembers between conversations
+├── skills/                    your own skills, if you add any
+└── index/                     the corpus indexes
 ```
 
-## Skills
+Lexicons are CSV files with `category,term` per row (a header row is fine; a term ending in `*` is a prefix). Put
+yours in `lab/lexicons/` and ask for them by name.
 
-A skill is a folder with a `SKILL.md` file: a short header, then instructions. Happiness sees each skill's name
-and description, and loads the whole file when a task calls for it. Add your own as
-`~/.happiness/skills/<name>/SKILL.md`:
+## Settings
 
-```markdown
----
-name: course-emails
-description: Emails to the students of Machine Learning for the Humanities. Use for any message to them.
----
-Write in Italian, warmly and briefly. Sign as Yuri. Put dates as "mercoledì 12 novembre".
+| Flag | Environment variable | Default | |
+|---|---|---|---|
+| `--corpus` | `HAPPINESS_CORPUS` | | The folder of your texts (required) |
+| `--metadata` | `HAPPINESS_METADATA` | `metadata.csv` in the corpus | One row per text |
+| `--passages` | `HAPPINESS_PASSAGES` | `20000` | Characters of corpus text that may go to Claude per conversation |
+| `--sandbox` | `HAPPINESS_SANDBOX` | `auto` | `docker`, `local` (your Python, with approval) or `auto` |
+| `--yes` | | | With `local`: run scripts without asking |
+| `--model` | `HAPPINESS_MODEL` | `claude-opus-5-5` | `claude-sonnet-5-5` or `claude-haiku-5-5` cost less |
+| `--effort` | `HAPPINESS_EFFORT` | `medium` | `low`, `medium`, `high`, `xhigh` or `max` |
+| `--web` | `HAPPINESS_WEB` | off | Web search and fetch |
+| `--lab` | `HAPPINESS_LAB` | `~/.happiness/lab` | Notebooks, tables, scripts, figures |
+| `--home` | `HAPPINESS_HOME` | `~/.happiness` | Index, memory and skills |
+
+## From Python or a notebook
+
+```python
+from pathlib import Path
+from happiness import Agent, Settings
+
+agent = Agent(Settings(corpus=Path("~/corpora/novels").expanduser()))
+answer = agent.ask("Which decade has the most happiness words per 10,000 words?")
 ```
 
-A skill of yours with the same name as a bundled one replaces it. The bundled lexicon is
-[`skills/happiness-lexicon/SKILL.md`](skills/happiness-lexicon/SKILL.md): edit it to extend the lexicon.
+`agent.lab.session` is the folder with the tables and figures behind the answer. Without Docker, it shows you each
+script and asks before running it, as in the terminal; `Agent(..., approve=run_without_asking)` (from
+`happiness.sandbox`) skips that.
 
-## Safety
+## What to keep in mind
 
-- **Files.** The workspace tool cannot leave the workspace, through `..`, absolute paths or symbolic links.
-  Memory stays in its folder, and skills are read-only. Overwriting a file keeps the old version in
-  `workspace/.backups/`.
-- **Shell.** Off unless you ask for it, never available in the web chat, and each command needs your approval
-  unless you pass `--yes`. Commands run in the workspace without the `ANTHROPIC_*` and `HAPPINESS_*` variables, so
-  your keys stay out of reach. It is not a sandbox: an approved command can do anything your user can.
-- **Web chat.** It needs a password beyond localhost, and the page's API calls carry a header that other sites
-  cannot send. A strict Content Security Policy is set, and model output is escaped before it is rendered.
-- **What it reads.** Web pages and files can contain instructions aimed at an AI. Happiness treats them as
-  material, not orders, but stay aware of it, especially with the shell on.
-- **Costs.** Every request is billed to your API key. The conversation is prompt-cached, which makes long chats
-  much cheaper; `/new` (or **New chat**) starts a short one.
+- **The passage budget covers `concordance` and `read`.** What an analysis script prints is cut at 6,000
+  characters per run. Happiness is told to print numbers, not text, and every script is saved so you can check.
+- **Counting is lexical.** Each occurrence is counted once, as whole words, ignoring case. Negation, irony and
+  other senses are not handled, which is why Happiness checks counts with concordances. Segments are equal slices
+  of a text by length.
+- **Indexing speed.** On the machine this was built on, 300 texts (18 million words) indexed in about 20 seconds,
+  and counts over all of them took one to three seconds.
+- **Costs.** Every request is billed to your API key. Conversations are prompt-cached, which makes long sessions
+  much cheaper.
+- **Refusal fallback is on.** Requests carry `fallbacks: "default"` (beta `server-side-fallback-2026-07-01`), so if
+  the model declines on safety grounds, the API retries on the fallback model Anthropic recommends, in the same
+  call. Remove those two lines in `Agent.request()` if you'd rather not.
 
 ## How it works
 
-- [`agent.py`](agent.py) holds the loop. Each step streams a reply from the Messages API
-  (`client.beta.messages.stream`) with adaptive thinking and your effort level. If the reply asks for tools,
-  Happiness runs them and sends the results back, until Claude is done. Long server-side searches that pause are
-  resumed, a tool call cut off by the output limit is not run, and if Claude's safety checks decline a request, the
-  exchange is dropped so the conversation can go on.
-- **Refusal fallback is on**: requests carry `fallbacks: "default"` (beta `server-side-fallback-2026-07-01`), so if
-  the model declines on safety grounds, the API retries on the fallback model Anthropic recommends, within the same
-  call. Remove those two lines in `Agent.request()` if you'd rather not.
-- The instructions and the tool list are fixed when a conversation starts, and the history only ever grows. That
-  keeps the prompt cache warm and every earlier turn valid.
-- [`tools.py`](tools.py) holds the local tools: the workspace (Anthropic's text editor tool), memory (the SDK's
-  local memory tool), `load_skill`, and the optional shell (Anthropic's bash tool). Web search and fetch run on
-  Anthropic's side.
-- [`web.py`](web.py) is the web chat (standard library only; replies stream as server-sent events), and
-  [`__main__.py`](__main__.py) is the command line.
+- [`corpus.py`](corpus.py): reading texts, the catalogue, the index (SQLite with FTS5 when available, a plain scan
+  otherwise), counts, concordances and passages.
+- [`tools.py`](tools.py): the tools Claude calls, the passage budget, and the notebook entries.
+- [`sandbox.py`](sandbox.py) and [`sandbox_image/`](sandbox_image/Dockerfile): where scripts run.
+- [`lab.py`](lab.py): the lab folders and notebooks.
+- [`agent.py`](agent.py): the loop. Each step streams a reply from the Messages API with adaptive thinking, runs
+  the tools it asks for and sends the results back. The instructions and tools are fixed for a conversation and
+  the history only grows, which keeps the prompt cache warm.
+- [`__main__.py`](__main__.py): the command line.
 
 ## Tests
 
@@ -192,5 +163,5 @@ From the repository root:
 python -m unittest discover -s happiness/tests -t .
 ```
 
-They run offline: the real SDK talks to a scripted stand-in for the API, so requests, streaming, tools, refusals,
-fallbacks, the web server and uploads are all exercised without a key.
+They run offline on a small corpus in five languages. The real SDK talks to a scripted stand-in for the API, so
+indexing, counting, the budget, the sandbox, the notebook and the agent loop are all exercised without a key.

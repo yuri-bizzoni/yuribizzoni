@@ -1,8 +1,8 @@
 """Command line.
 
-    python -m happiness                     chat in the terminal
-    python -m happiness "a request"         answer once and exit (stdin is appended, if piped)
-    python -m happiness serve               the web chat
+    python -m happiness --corpus ~/corpora/novels                 talk about your corpus
+    python -m happiness --corpus ~/corpora/novels "a question"    answer once and exit (stdin is added, if piped)
+    python -m happiness index --corpus ~/corpora/novels           index the corpus and describe it
 """
 
 from __future__ import annotations
@@ -10,18 +10,20 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
-from typing import TextIO
+from typing import Callable, TextIO
 
-from .agent import DEFAULT_MODEL, EFFORTS, Agent, Settings, describe_error
-from .tools import Approver
+from .agent import DEFAULT_MODEL, EFFORTS, SANDBOXES, Agent, Settings, describe_error
+from .corpus import Corpus, CorpusError
+from .sandbox import ScriptApprover, run_without_asking
 
 try:
-    import readline  # noqa: F401  (line editing and history for input())
+    import readline  # noqa: F401  # line editing and history for input()
 except ImportError:
     pass
 
-HELP = "/new starts a fresh conversation · /exit leaves · Ctrl-C stops a reply"
+HELP = "/new starts afresh · /lab shows the notebook folder · /budget the passages left · /exit leaves · Ctrl-C stops a reply"
 
 
 class Printer:
@@ -71,40 +73,76 @@ class Printer:
         self.started = True
 
 
-def approver(printer: Printer) -> Approver:
-    def approve(command: str) -> bool:
-        printer.line(f"  ? Happiness wants to run:  {command}", "36")
+def script_approver(printer: Printer) -> ScriptApprover:
+    """Show each script before it runs with the user's own Python, and ask."""
+    always = False
+
+    def approve(code: str, path: Path) -> bool:
+        nonlocal always
+        if always:
+            return True
+        lines = code.splitlines()
+        printer.line(f"  ? Happiness wants to run {path.name} with your Python (there is no sandbox without Docker):", "36")
+        printer.out.write(printer.style("2", "\n".join(f"    {line}" for line in lines[:40])) + "\n")
+        if len(lines) > 40:
+            printer.line(f"    … {len(lines) - 40} more lines in {path}")
         try:
-            answer = input("    allow? [y/N] ")
+            answer = input("    run it? [y]es, [n]o, [a]lways in this session: ").strip().lower()
         except EOFError:
             printer.out.write("\n")
             return False
-        return answer.strip().lower() in ("y", "yes")
+        always = answer in ("a", "always")
+        return always or answer in ("y", "yes")
 
     return approve
 
 
 def add_common_options(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--model", help=f"Claude model (default: $HAPPINESS_MODEL or {DEFAULT_MODEL})")
-    parser.add_argument("--effort", choices=EFFORTS, help="how hard to think (default: $HAPPINESS_EFFORT or medium)")
-    parser.add_argument("--home", type=Path, help="memory, skills and workspace (default: $HAPPINESS_HOME or ~/.happiness)")
-    parser.add_argument("--workspace", type=Path, help="the folder Happiness may read and write (default: <home>/workspace)")
-    parser.add_argument("--no-web", action="store_true", help="turn off web search and web fetch")
+    parser.add_argument("--corpus", type=Path, help="the folder of your texts: .txt files, searched recursively (default: $HAPPINESS_CORPUS)")
+    parser.add_argument("--metadata", type=Path, help="a CSV with one row per text (default: metadata.csv in the corpus folder)")
+    parser.add_argument("--home", type=Path, help="the index, memory and skills (default: $HAPPINESS_HOME or ~/.happiness)")
 
 
 def settings_from(args: argparse.Namespace) -> Settings:
     settings = Settings.from_env()
-    if args.model:
-        settings.model = args.model
-    if args.effort:
-        settings.effort = args.effort
-    if args.home:
-        settings.home = args.home.expanduser()
-    if args.workspace:
-        settings.workspace = args.workspace.expanduser()
-    if args.no_web:
-        settings.web = False
+    for key in ("corpus", "metadata", "home", "lab"):
+        if getattr(args, key, None):
+            setattr(settings, key, getattr(args, key).expanduser())
+    for key in ("model", "effort", "sandbox"):
+        if getattr(args, key, None):
+            setattr(settings, key, getattr(args, key))
+    if getattr(args, "passages", None) is not None:
+        settings.passages = args.passages
+    if getattr(args, "web", False):
+        settings.web = True
     return settings
+
+
+def progress_printer(out: TextIO) -> Callable[[int, int, str], None]:
+    tty = out.isatty()
+    last = [0.0]
+
+    def progress(done: int, total: int, name: str) -> None:
+        if tty:
+            out.write(f"\r\033[2K  indexing {done:,}/{total:,} {name[:60]}" if done < total else "\r\033[2K")
+            out.flush()
+        elif done == total or time.monotonic() - last[0] > 10:
+            out.write(f"  indexing {done:,}/{total:,}\n")
+            last[0] = time.monotonic()
+
+    return progress
+
+
+def open_corpus(settings: Settings, printer: Printer) -> Corpus:
+    started = time.monotonic()
+    corpus = settings.open_corpus()
+    report = corpus.update(progress_printer(printer.out))
+    if report["indexed"] or report["removed"]:
+        printer.line(
+            f"  · indexed {report['indexed']:,} texts" + (f", dropped {report['removed']:,}" if report["removed"] else "")
+            + f" ({time.monotonic() - started:.0f} s)"
+        )
+    return corpus
 
 
 def answer(agent: Agent, printer: Printer, text: str) -> bool:
@@ -127,10 +165,11 @@ def answer(agent: Agent, printer: Printer, text: str) -> bool:
 
 
 def chat(agent: Agent, printer: Printer) -> int:
-    s = agent.settings
-    tools = "web, memory, workspace, skills" + (", shell" if s.shell else "")
-    printer.out.write(printer.style("1", "Happiness") + f" · {s.model} · {tools}\n")
-    printer.line(f"workspace: {agent.toolbox.workspace.root}\n{HELP}\n")
+    s, texts = agent.settings, agent.corpus.texts()
+    sandbox = "Docker, no network" if agent.toolbox.sandbox.kind == "docker" else "your Python, you approve each script"
+    printer.out.write(printer.style("1", "Happiness") + f" · {s.model} · {len(texts):,} texts, "
+                      f"{sum(t['words'] or 0 for t in texts):,} words · analysis: {sandbox}\n")
+    printer.line(f"lab: {agent.lab.root}\n{HELP}\n")
     you = printer.style("1", "you ›", prompt=True) + " "
     while True:
         try:
@@ -144,7 +183,14 @@ def chat(agent: Agent, printer: Printer) -> int:
             return 0
         if text == "/new":
             agent.new_conversation()
-            printer.line("  · fresh conversation")
+            printer.line("  · fresh conversation (and a fresh passage budget)")
+            continue
+        if text == "/lab":
+            printer.line(f"  · {agent.lab.session or 'no folder yet: it is made at your first question'}")
+            continue
+        if text == "/budget":
+            budget = agent.toolbox.budget
+            printer.line(f"  · {budget.left:,} of {budget.limit:,} characters of passages left in this conversation")
             continue
         if text in ("/help", "/?"):
             printer.line(HELP)
@@ -154,44 +200,54 @@ def chat(agent: Agent, printer: Printer) -> int:
         printer.out.write("\n")
 
 
-def serve_command(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        prog="python -m happiness serve",
-        description="Serve the Happiness web chat. Set HAPPINESS_PASSWORD to serve beyond this computer.",
-    )
+def index_command(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="python -m happiness index", description="Index a corpus (or bring its index up to date) and describe it.")
     add_common_options(parser)
-    parser.add_argument("--host", default=os.environ.get("HAPPINESS_HOST", "127.0.0.1"), help="default: 127.0.0.1")
-    parser.add_argument("--port", type=int, default=int(os.environ.get("HAPPINESS_PORT", "8000")), help="default: 8000")
     args = parser.parse_args(argv)
-
-    from .web import serve
-
-    return serve(settings_from(args), args.host, args.port, password=os.environ.get("HAPPINESS_PASSWORD"))
+    settings = settings_from(args)
+    if settings.corpus is None:
+        parser.error("give the folder of your texts with --corpus (or HAPPINESS_CORPUS)")
+    printer = Printer()
+    try:
+        corpus = open_corpus(settings, printer)
+    except CorpusError as error:
+        parser.error(str(error))
+    printer.out.write(corpus.describe() + f"\nIndex: {corpus.index_path}\n")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    if argv[:1] == ["serve"]:
-        return serve_command(argv[1:])
+    if argv[:1] == ["index"]:
+        return index_command(argv[1:])
 
     parser = argparse.ArgumentParser(
         prog="python -m happiness",
-        description="Happiness: a small agent you run yourself.",
-        epilog="The web chat: python -m happiness serve --help",
+        description="Happiness: a research assistant for your own corpus, on your own machine.",
+        epilog="Index without chatting: python -m happiness index --corpus PATH",
     )
     add_common_options(parser)
-    parser.add_argument("--shell", action="store_true", help="let Happiness run shell commands in the workspace (you approve each)")
-    parser.add_argument("--yes", action="store_true", help="with --shell: run commands without asking first")
+    parser.add_argument("--lab", type=Path, help="notebooks, tables, scripts and figures (default: <home>/lab)")
+    parser.add_argument("--model", help=f"Claude model (default: $HAPPINESS_MODEL or {DEFAULT_MODEL})")
+    parser.add_argument("--effort", choices=EFFORTS, help="how hard to think (default: $HAPPINESS_EFFORT or medium)")
+    parser.add_argument("--sandbox", choices=SANDBOXES, help="where analysis scripts run (default: auto, i.e. Docker if it is running)")
+    parser.add_argument("--yes", action="store_true", help="with --sandbox local: run scripts without asking first")
+    parser.add_argument("--passages", type=int, help="characters of corpus text that may go to Claude per conversation (default 20000)")
+    parser.add_argument("--web", action="store_true", help="also let Happiness search the web (for facts about authors and works)")
     parser.add_argument("request", nargs="*", help="answer this once and exit; leave out to chat")
     args = parser.parse_args(argv)
 
     settings = settings_from(args)
-    settings.shell = settings.shell or args.shell
+    try:
+        settings.check()
+    except ValueError as error:
+        parser.error(str(error))
     printer = Printer()
     try:
-        agent = Agent(settings, approve=None if args.yes else approver(printer))
-    except ValueError as error:  # e.g. HAPPINESS_EFFORT set to something unknown
+        corpus = open_corpus(settings, printer)
+    except CorpusError as error:
         parser.error(str(error))
+    agent = Agent(settings, corpus=corpus, approve=run_without_asking if args.yes else script_approver(printer))
 
     request = " ".join(args.request).strip()
     if not sys.stdin.isatty():

@@ -1,351 +1,213 @@
-"""The tools Happiness can use, each one confined to a folder you choose.
-
-Web search and web fetch are server tools: Anthropic runs them, so this module only
-declares them. Memory, the workspace editor, skills and the optional shell run here,
-on your machine.
-"""
+"""The tools Happiness uses on your corpus. They all run on your machine; what they return is what
+Claude sees, and the corpus text in it is held to a passage budget."""
 
 from __future__ import annotations
 
-import base64
+import csv
 import json
-import os
-import shutil
-import signal
-import subprocess
-from dataclasses import dataclass
+import statistics
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from anthropic.lib.tools import ToolError
 from anthropic.tools.memory import BetaLocalFilesystemMemoryTool
 
+from .corpus import Corpus, CorpusError, CountResult, term_pattern
+from .lab import Lab
+from .resources import Lexicon, discover_lexicons, discover_skills, read_lexicon, read_skill
+from .sandbox import Sandbox, clip
+from .workspace import Workspace
+
+Notify = Callable[[str, str], None]
+
+MAX_READ = 1500
+DEFAULT_READ = 800
+MAX_LINES = 40
+MAX_CONTEXT = 100
+MAX_ROWS = 100
+
 WEB_TOOLS: list[dict[str, Any]] = [
     {"type": "web_search_20260209", "name": "web_search", "max_uses": 8},
     {"type": "web_fetch_20260209", "name": "web_fetch", "max_uses": 8},
 ]
 EDITOR: dict[str, Any] = {"type": "text_editor_20250728", "name": "str_replace_based_edit_tool"}
-BASH: dict[str, Any] = {"type": "bash_20250124", "name": "bash"}
-LOAD_SKILL: dict[str, Any] = {
-    "name": "load_skill",
-    "description": (
-        "Load the full instructions of one of your skills. Call it before any task a skill covers "
-        "(see 'Your skills' in your instructions), then follow what it says."
-    ),
-    "eager_input_streaming": True,
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "name": {"type": "string", "description": "The skill's name, as listed in your instructions."},
-            "file": {
-                "type": "string",
-                "description": "Another file inside the skill's folder, when its instructions point to one. "
-                "Defaults to SKILL.md.",
-            },
-        },
-        "required": ["name"],
-        "additionalProperties": False,
-    },
+
+
+def _tool(name: str, description: str, properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
+    return {
+        "name": name,
+        "description": description,
+        "eager_input_streaming": True,
+        "input_schema": {"type": "object", "properties": properties, "required": required, "additionalProperties": False},
+    }
+
+
+TERMS = {
+    "type": "array",
+    "items": {"type": "string"},
+    "description": "Words (gioia), phrases (la gioia) or prefixes (felic*), matched as whole words, ignoring case.",
 }
-
-MAX_TEXT = 100_000  # characters returned when viewing a text file
-MAX_LISTING = 400  # entries returned when viewing a folder
-MAX_PDF = 20 * 1024 * 1024
-MAX_IMAGE = 5 * 1024 * 1024
-IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
-SHELL_TIMEOUT = 120  # seconds
-MAX_SHELL_OUTPUT = 30_000  # characters
-
-Approver = Callable[[str], bool]
-"""Gets a shell command before it runs and says whether it may run."""
+LEXICON = {
+    "type": "string",
+    "description": "Instead of terms: a lexicon by name (see Lexicons in your instructions), or a CSV path in the lab folder.",
+}
+WHERE = {
+    "type": "string",
+    "description": "An SQL condition on the columns of `texts` choosing the texts, e.g. language = 'it' AND year < 1900. "
+    "Leave it out for the whole corpus.",
+}
+CATALOGUE = _tool(
+    "catalogue",
+    "Query the corpus catalogue with SQL (SQLite). The table `texts` has one row per text with its metadata and statistics "
+    "(the columns are listed in your instructions). Use it to see what the corpus holds, to choose subsets, and to compare "
+    f"texts by metadata or statistics. Returns at most {MAX_ROWS} rows and no corpus text.",
+    {"sql": {"type": "string", "description": "One SELECT statement over `texts`."}},
+    ["sql"],
+)
+COUNT = _tool(
+    "count",
+    "Count words, phrases, prefixes or a lexicon in the corpus or part of it: hits per text, normalised per 10,000 words, "
+    "and optionally per segment of each text (for arcs across a narrative) and per group of a catalogue column. Saves the "
+    "full table (one row per text, with its metadata) in the lab for run_python, and returns a summary. No corpus text.",
+    {
+        "terms": TERMS,
+        "lexicon": LEXICON,
+        "where": WHERE,
+        "segments": {"type": "integer", "description": "Cut each text into this many equal parts (2–100) and count in each; 10 gives deciles."},
+        "group_by": {"type": "string", "description": "A column of `texts` to summarise by, such as author or year."},
+    },
+    [],
+)
+CONCORDANCE = _tool(
+    "concordance",
+    "Show occurrences in context (keyword in context), sampled evenly from all the matches: to see how words are used and "
+    "whether a count measures what you think. Each line draws on the passage budget.",
+    {
+        "terms": TERMS,
+        "lexicon": LEXICON,
+        "where": WHERE,
+        "limit": {"type": "integer", "description": f"How many lines, at most {MAX_LINES} (default 15)."},
+        "context": {"type": "integer", "description": f"Characters of context on each side, at most {MAX_CONTEXT} (default 60)."},
+    },
+    [],
+)
+READ = _tool(
+    "read",
+    f"Read a short passage of a text, from a character offset (concordance shows them) or a position in percent. At most "
+    f"{MAX_READ} characters, drawn from the passage budget: read what you need to check or to quote, no more.",
+    {
+        "text": {"type": "string", "description": "The text's name, or a part of it that picks out one text."},
+        "start": {"type": "integer", "description": "The character offset where the passage starts."},
+        "position": {"type": "number", "description": "Or where it starts, in percent of the text (0–100)."},
+        "length": {"type": "integer", "description": f"How many characters (default {DEFAULT_READ}, at most {MAX_READ})."},
+    },
+    ["text"],
+)
+RUN_PYTHON = _tool(
+    "run_python",
+    "Run a Python script for what the other tools can't do: statistics, models, plots, features of your own. It runs on the "
+    "user's machine (see Your sandbox) inside this conversation's lab folder, where count's tables are in tables/. "
+    "`from happiness_corpus import catalogue, text, words, sentences` gives the catalogue as a DataFrame and texts by name. "
+    "Save figures in figures/ and tables in tables/. Print numbers and short summaries, never corpus text; the output is cut "
+    "at 6,000 characters.",
+    {
+        "title": {"type": "string", "description": "A few words on what the script does; it names the file."},
+        "code": {"type": "string", "description": "The whole script."},
+    },
+    ["title", "code"],
+)
+LOAD_SKILL = _tool(
+    "load_skill",
+    "Load the full instructions of one of your skills. Call it before any task a skill covers (see Your skills), then follow them.",
+    {
+        "name": {"type": "string", "description": "The skill's name."},
+        "file": {"type": "string", "description": "Another file in the skill's folder, if its instructions point to one."},
+    },
+    ["name"],
+)
 
 
 class InvalidInput(Exception):
-    """A tool call whose arguments don't match the tool's schema."""
+    """A tool call whose arguments don't fit the tool's schema."""
 
 
-# --------------------------------------------------------------------------- skills
+class PassageBudget:
+    """How many characters of corpus text may still go to the API in this conversation."""
+
+    def __init__(self, limit: int):
+        self.limit = limit
+        self.used = 0
+
+    @property
+    def left(self) -> int:
+        return max(0, self.limit - self.used)
 
 
-@dataclass(frozen=True)
-class Skill:
-    name: str
-    description: str
-    folder: Path
+def _text_arg(args: dict[str, Any], key: str, required: bool = False) -> str | None:
+    value = args.get(key)
+    if value is None and not required:
+        return None
+    if not isinstance(value, str) or (required and not value.strip()):
+        raise InvalidInput(args)
+    return value.strip()
 
 
-def read_frontmatter(text: str) -> tuple[dict[str, str], str]:
-    """Split a SKILL.md into its `---` header fields (flat `key: value` lines) and its body."""
-    if not text.startswith("---"):
-        return {}, text
-    end = text.find("\n---", 3)
-    if end == -1:
-        return {}, text
-    fields: dict[str, str] = {}
-    for line in text[3:end].splitlines():
-        key, sep, value = line.partition(":")
-        if not sep or not key.strip() or line[:1].isspace():
-            continue
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] == '"':
-            try:
-                value = json.loads(value)
-            except ValueError:
-                value = value[1:-1]
-        elif len(value) >= 2 and value[0] == value[-1] == "'":
-            value = value[1:-1].replace("''", "'")
-        fields[key.strip()] = value
-    return fields, text[end + 4 :].lstrip("\n")
+def _int_arg(args: dict[str, Any], key: str) -> int | None:
+    value = args.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or int(value) != value:
+        raise InvalidInput(args)
+    return int(value)
 
 
-def discover_skills(folders: Iterable[Path]) -> dict[str, Skill]:
-    """Find `<folder>/<skill>/SKILL.md` files. A skill in a later folder replaces one of the same name."""
-    skills: dict[str, Skill] = {}
-    for folder in folders:
-        if not folder.is_dir():
-            continue
-        for skill_md in sorted(folder.glob("*/SKILL.md")):
-            try:
-                fields, _ = read_frontmatter(skill_md.read_text(encoding="utf-8"))
-            except (OSError, UnicodeDecodeError):
-                continue
-            name = fields.get("name") or skill_md.parent.name
-            skills[name] = Skill(name, " ".join(fields.get("description", "").split()), skill_md.parent)
-    return skills
+def _check_keys(args: dict[str, Any], allowed: Iterable[str]) -> None:
+    if set(args) - set(allowed):
+        raise InvalidInput(args)
 
 
-def read_skill(skills: dict[str, Skill], name: str, file: str = "SKILL.md") -> str:
-    skill = skills.get(name)
-    if skill is None:
-        raise ToolError(f"No skill called {name!r}. Available: {', '.join(sorted(skills)) or 'none'}.")
-    folder = skill.folder.resolve()
-    target = (folder / file).resolve()
-    if not target.is_relative_to(folder) or not target.is_file():
-        raise ToolError(f"{file} is not a file of the {name} skill.")
-    return target.read_text(encoding="utf-8")
+def _rate(hits: int, words: int) -> float:
+    return 10_000 * hits / words if words else 0.0
 
 
-# --------------------------------------------------------------------------- workspace
-
-
-def _size(n: float) -> str:
-    if n < 1024:
-        return f"{int(n)} B"
-    for unit in ("KB", "MB"):
-        n /= 1024
-        if n < 1024:
-            break
-    return f"{n:.1f} {unit}"
-
-
-def _children(folder: Path) -> list[os.DirEntry[str]]:
-    try:
-        with os.scandir(folder) as entries:
-            return sorted((e for e in entries if not e.name.startswith(".")), key=lambda e: e.name.lower())
-    except OSError:
-        return []
-
-
-class Workspace:
-    """Anthropic's text editor tool, confined to one folder: view, create, str_replace, insert."""
-
-    def __init__(self, root: Path):
-        root.mkdir(parents=True, exist_ok=True)
-        self.root = root.resolve()
-
-    def resolve(self, path: object) -> Path:
-        """Turn a path from the model into a real path inside the workspace, or refuse it."""
-        if not isinstance(path, str) or not path.strip():
-            raise ToolError("Give a path inside the workspace, such as `notes.md`, or `.` for the workspace itself.")
-        raw = Path(path.strip())
-        target = (raw if raw.is_absolute() else self.root / raw).resolve()
-        if raw.is_absolute() and not target.is_relative_to(self.root):
-            # The model may write `/notes.md` for the workspace's own notes.md.
-            target = (self.root / raw.relative_to(raw.anchor)).resolve()
-        if not target.is_relative_to(self.root):
-            raise ToolError(f"{path} is outside the workspace.")
-        return target
-
-    def name(self, target: Path) -> str:
-        return target.relative_to(self.root).as_posix() or "."
-
-    def __call__(self, args: dict[str, Any]) -> str | list[dict[str, Any]]:
-        command = args.get("command")
-        target = self.resolve(args.get("path"))
-        if command == "view":
-            return self.view(target, args.get("view_range"))
-        if command == "create":
-            return self.create(target, args.get("file_text"))
-        if command == "str_replace":
-            return self.str_replace(target, args.get("old_str"), args.get("new_str", ""))
-        if command == "insert":
-            return self.insert(target, args.get("insert_line"), args.get("insert_text", args.get("new_str")))
-        raise ToolError(f"Unknown command {command!r}: use view, create, str_replace or insert.")
-
-    def view(self, target: Path, view_range: object = None) -> str | list[dict[str, Any]]:
-        if target.is_dir():
-            return self._listing(target)
-        if not target.is_file():
-            raise ToolError(f"{self.name(target)} does not exist.")
-        size = target.stat().st_size
-        suffix = target.suffix.lower()
-        if suffix == ".pdf" or suffix in IMAGE_TYPES:
-            limit = MAX_PDF if suffix == ".pdf" else MAX_IMAGE
-            if size > limit:
-                raise ToolError(f"{self.name(target)} is {_size(size)}; the limit for this kind of file is {_size(limit)}.")
-            data = base64.standard_b64encode(target.read_bytes()).decode("ascii")
-            kind = "document" if suffix == ".pdf" else "image"
-            media_type = "application/pdf" if suffix == ".pdf" else IMAGE_TYPES[suffix]
-            return [
-                {"type": "text", "text": f"{self.name(target)} ({_size(size)}):"},
-                {"type": kind, "source": {"type": "base64", "media_type": media_type, "data": data}},
-            ]
-        lines = self._read_text(target).splitlines()
-        first, last = 1, len(lines)
-        if view_range is not None:
-            if not (isinstance(view_range, list) and len(view_range) == 2 and all(type(n) is int for n in view_range)):
-                raise ToolError("view_range must be [first_line, last_line]; use -1 as last_line for the end of the file.")
-            first = max(1, view_range[0])
-            last = len(lines) if view_range[1] == -1 else min(view_range[1], len(lines))
-        text = "\n".join(f"{n:6}\t{lines[n - 1]}" for n in range(first, last + 1))
-        if len(text) > MAX_TEXT:
-            text = text[:MAX_TEXT] + f"\n… cut at {MAX_TEXT:,} characters; use view_range to read the rest."
-        return text or "(empty file)"
-
-    def _listing(self, folder: Path) -> str:
-        lines: list[str] = []
-        for entry in _children(folder):
-            for item in [entry, *(_children(Path(entry.path)) if entry.is_dir() else [])]:
-                try:
-                    detail = "/" if item.is_dir() else f"  {_size(item.stat().st_size)}"
-                except OSError:  # a broken link, say
-                    continue
-                lines.append(self.name(Path(item.path)) + detail)
-                if len(lines) >= MAX_LISTING:
-                    return "\n".join(lines) + f"\n… more than {MAX_LISTING} entries; view a subfolder to see the rest."
-        return "\n".join(lines) or f"{self.name(folder)} is empty."
-
-    def _read_text(self, target: Path) -> str:
-        if not target.is_file():
-            raise ToolError(f"{self.name(target)} does not exist.")
-        try:
-            return target.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            raise ToolError(f"{self.name(target)} is not a UTF-8 text file.") from None
-
-    def create(self, target: Path, file_text: object) -> str:
-        if not isinstance(file_text, str):
-            raise ToolError("create needs file_text.")
-        if target.is_dir():
-            raise ToolError(f"{self.name(target)} is a folder.")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        note = ""
-        if target.exists():
-            backup = self.root / ".backups" / self.name(target)
-            backup.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(target, backup)
-            note = f" (the previous version is in .backups/{self.name(target)})"
-        target.write_text(file_text, encoding="utf-8")
-        return f"Wrote {self.name(target)}{note}."
-
-    def str_replace(self, target: Path, old: object, new: object) -> str:
-        text = self._read_text(target)
-        if not isinstance(old, str) or not old:
-            raise ToolError("str_replace needs old_str.")
-        if not isinstance(new, str):
-            raise ToolError("new_str must be text.")
-        count = text.count(old)
-        if count != 1:
-            raise ToolError(
-                f"old_str was not found in {self.name(target)}."
-                if count == 0
-                else f"old_str appears {count} times in {self.name(target)}; include more context so it matches once."
-            )
-        target.write_text(text.replace(old, new, 1), encoding="utf-8")
-        return f"Edited {self.name(target)}."
-
-    def insert(self, target: Path, line: object, text: object) -> str:
-        lines = self._read_text(target).splitlines(keepends=True)
-        if type(line) is not int or not 0 <= line <= len(lines):
-            raise ToolError(f"insert_line must be a line number from 0 (the top) to {len(lines)}.")
-        if not isinstance(text, str):
-            raise ToolError("insert needs insert_text.")
-        if lines and line == len(lines) and not lines[-1].endswith("\n"):
-            lines[-1] += "\n"
-        lines.insert(line, text if text.endswith("\n") else text + "\n")
-        target.write_text("".join(lines), encoding="utf-8")
-        return f"Inserted the text after line {line} of {self.name(target)}."
-
-
-# --------------------------------------------------------------------------- shell
-
-
-def _clip(output: str) -> str:
-    output = output.strip()
-    if len(output) <= MAX_SHELL_OUTPUT:
-        return output
-    half = MAX_SHELL_OUTPUT // 2
-    return f"{output[:half]}\n… {len(output) - MAX_SHELL_OUTPUT:,} characters left out …\n{output[-half:]}"
-
-
-class Shell:
-    """Anthropic's bash tool. Each command runs in a fresh shell in the workspace, without your API keys."""
-
-    def __init__(self, cwd: Path, approve: Approver | None = None):
-        self.cwd = cwd
-        self.approve = approve
-
-    def __call__(self, args: dict[str, Any]) -> str:
-        if args.get("restart"):
-            return "Ready. Each command runs in a fresh shell that starts in the workspace."
-        command = args.get("command")
-        if not isinstance(command, str) or not command.strip():
-            raise ToolError("Give a command to run.")
-        if self.approve is not None and not self.approve(command):
-            raise ToolError("The user declined to run this command.")
-        env = {k: v for k, v in os.environ.items() if not k.startswith(("ANTHROPIC_", "HAPPINESS_"))}
-        process = subprocess.Popen(
-            ["bash", "-c", command],
-            cwd=self.cwd,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            start_new_session=True,
-        )
-        try:
-            output, _ = process.communicate(timeout=SHELL_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            output, _ = process.communicate()
-            raise ToolError(f"Stopped after {SHELL_TIMEOUT} seconds.\n{_clip(output)}") from None
-        output = _clip(output) or "(no output)"
-        return output if process.returncode == 0 else f"{output}\n(exit code {process.returncode})"
-
-
-# --------------------------------------------------------------------------- toolbox
+def _fmt(value: float) -> str:
+    return f"{value:,.2f}" if abs(value) < 100 else f"{value:,.1f}"
 
 
 def describe(name: str, args: object) -> str:
-    """A one-line, human-readable account of a tool call, for the chat window."""
+    """A one-line account of a tool call, for the terminal."""
     a = args if isinstance(args, dict) else {}
+    what = a.get("lexicon") or ", ".join(str(t) for t in (a.get("terms") or [])[:5])
+    where = f" where {a['where']}" if a.get("where") else ""
+    if name == "catalogue":
+        sql = " ".join(str(a.get("sql", "")).split())
+        return f"catalogue: {sql[:90]}{'…' if len(sql) > 90 else ''}"
+    if name == "count":
+        extra = (f", {a['segments']} segments" if a.get("segments") else "") + (f", by {a['group_by']}" if a.get("group_by") else "")
+        return f"counting {what}{where}{extra}"
+    if name == "concordance":
+        return f"concordance: {what}{where}"
+    if name == "read":
+        at = f"{a['position']}%" if a.get("position") is not None else f"character {a.get('start', 0)}"
+        return f"reading {a.get('text', '')} at {at}"
+    if name == "run_python":
+        return f"running a script: {a.get('title', '')}"
+    if name == "memory":
+        return f"memory: {a.get('command', '')} {a.get('path', '')}".strip()
+    if name == "str_replace_based_edit_tool":
+        verbs = {"view": "looking at", "create": "writing", "str_replace": "editing", "insert": "editing"}
+        return f"{verbs.get(str(a.get('command')), 'using')} {a.get('path', 'the lab')}"
+    if name == "load_skill":
+        return f"loading the {a.get('name', '')} skill"
     if name == "web_search":
         return f"searching the web for “{a.get('query', '')}”"
     if name == "web_fetch":
         return f"reading {a.get('url', 'a web page')}"
-    if name == "memory":
-        return f"memory: {a.get('command', '')} {a.get('path', '')}".strip()
-    if name == "str_replace_based_edit_tool":
-        verbs = {"view": "reading", "create": "writing", "str_replace": "editing", "insert": "editing"}
-        return f"{verbs.get(str(a.get('command')), 'using')} {a.get('path', 'the workspace')}"
-    if name == "load_skill":
-        return f"loading the {a.get('name', '')} skill"
-    if name == "bash":
-        return f"$ {a.get('command', 'restart')}"
     return name.replace("_", " ")
+
+
+def _ignore(kind: str, text: str) -> None:
+    pass
 
 
 class Toolbox:
@@ -354,53 +216,302 @@ class Toolbox:
     def __init__(
         self,
         *,
-        workspace: Path,
-        memory: Path,
+        corpus: Corpus,
+        lab: Lab,
+        sandbox: Sandbox,
+        memory_dir: Path,
         skill_folders: Iterable[Path],
-        web: bool = True,
-        shell: bool = False,
-        approve: Approver | None = None,
+        lexicon_folders: Iterable[Path],
+        web: bool = False,
+        passages: int = 20_000,
     ):
-        self.workspace = Workspace(workspace)
-        self.memory = BetaLocalFilesystemMemoryTool(base_path=str(memory))
+        self.corpus = corpus
+        self.lab = lab
+        self.sandbox = sandbox
+        self.memory = BetaLocalFilesystemMemoryTool(base_path=str(memory_dir))
+        self.workspace = Workspace(lab.root)
         self.skills = discover_skills(skill_folders)
+        self.lexicon_folders = list(lexicon_folders)
         self.web = web
-        self.shell = Shell(self.workspace.root, approve) if shell else None
+        self.budget = PassageBudget(passages)
+
+    def new_conversation(self) -> None:
+        self.budget = PassageBudget(self.budget.limit)
 
     def definitions(self) -> list[dict[str, Any]]:
-        """The tool list for a conversation. It stays the same from the first request to the last."""
+        """The tool list for a conversation; it stays the same from the first request to the last."""
         tools = [*WEB_TOOLS] if self.web else []
-        tools += [dict(self.memory.to_dict()), EDITOR, LOAD_SKILL]
-        if self.shell:
-            tools.append(BASH)
-        return tools
+        return tools + [CATALOGUE, COUNT, CONCORDANCE, READ, RUN_PYTHON, dict(self.memory.to_dict()), EDITOR, LOAD_SKILL]
 
-    def load_skill(self, args: dict[str, Any]) -> str:
-        name, file = args.get("name"), args.get("file", "SKILL.md")
-        if not isinstance(name, str) or not isinstance(file, str) or set(args) - {"name", "file"}:
-            raise InvalidInput(args)
-        return read_skill(self.skills, name, file)
+    def lexicons(self) -> dict[str, Lexicon]:
+        found = {}
+        for name, path in discover_lexicons(self.lexicon_folders).items():
+            try:
+                found[name] = read_lexicon(path, name)
+            except (ToolError, OSError, UnicodeDecodeError):
+                continue
+        return found
 
-    def run(self, name: str, args: object) -> tuple[Any, bool]:
-        """Run one tool call. Returns the result content and whether it is an error."""
-        handlers: dict[str, Callable[[dict[str, Any]], Any]] = {
-            "memory": self.memory.call,
-            "str_replace_based_edit_tool": self.workspace,
-            "load_skill": self.load_skill,
+    # ---------------------------------------------------------------- dispatch
+
+    def run(self, name: str, args: object, notify: Notify = _ignore) -> tuple[Any, bool]:
+        """Run one tool call and note it in the lab notebook. Returns the result and whether it is an error."""
+        handlers: dict[str, Callable[[dict[str, Any], Notify], Any]] = {
+            "catalogue": self._catalogue,
+            "count": self._count,
+            "concordance": self._concordance,
+            "read": self._read,
+            "run_python": self._run_python,
+            "memory": lambda a, _: self.memory.call(a),
+            "str_replace_based_edit_tool": lambda a, _: self.workspace(a),
+            "load_skill": self._load_skill,
         }
-        if self.shell:
-            handlers["bash"] = self.shell
         handler = handlers.get(name)
         if handler is None:
             return f"There is no tool called {name}.", True
         try:
             if not isinstance(args, dict):
                 raise InvalidInput(args)
-            return handler(args), False
+            return handler(args, notify), False
         except InvalidInput as error:
             # Arguments that don't fit the schema (possible with eager input streaming): give them back.
+            self.lab.note(f"- **{name}**: malformed arguments, returned to Claude")
             return json.dumps({"INVALID_JSON": json.dumps(error.args[0], ensure_ascii=False)}), True
-        except ToolError as error:
-            return error.content, True
+        except (ToolError, CorpusError) as error:
+            content = error.content if isinstance(error, ToolError) else str(error)
+            self.lab.note(f"- **{name}** failed: {str(content).splitlines()[0][:300] if content else ''}")
+            return content, True
         except Exception as error:  # a failed tool is reported to the model, which can adapt
+            self.lab.note(f"- **{name}** failed: {type(error).__name__}: {error}")
             return f"{type(error).__name__}: {error}", True
+
+    # ---------------------------------------------------------------- shared arguments
+
+    def _terms(self, args: dict[str, Any]) -> tuple[list[str], list[str] | None, str]:
+        """The terms to look for, their categories if they come from a lexicon, and a label for them."""
+        lexicon_name = _text_arg(args, "lexicon")
+        if lexicon_name:
+            lexicon = self.lexicons().get(lexicon_name)
+            if lexicon is None:
+                path = self.workspace.resolve(lexicon_name)
+                if not path.is_file():
+                    names = ", ".join(sorted(self.lexicons())) or "none yet"
+                    raise ToolError(f"No lexicon called {lexicon_name!r}. Available: {names}.")
+                lexicon = read_lexicon(path)
+            for term in lexicon.terms:
+                term_pattern(term)
+            return lexicon.terms, lexicon.categories, f"the {lexicon.name} lexicon"
+        terms = args.get("terms")
+        if not isinstance(terms, list) or not terms or not all(isinstance(t, str) and t.strip() for t in terms):
+            if terms is None:
+                raise ToolError("Give some terms, or a lexicon.")
+            raise InvalidInput(args)
+        terms = list(dict.fromkeys(t.strip() for t in terms))
+        for term in terms:
+            term_pattern(term)
+        label = ", ".join(terms[:6]) + (f" and {len(terms) - 6} more" if len(terms) > 6 else "")
+        return terms, None, label
+
+    # ---------------------------------------------------------------- the corpus tools
+
+    def _catalogue(self, args: dict[str, Any], notify: Notify) -> str:
+        _check_keys(args, ["sql"])
+        sql = _text_arg(args, "sql", required=True) or ""
+        columns, rows, more = self.corpus.query(sql, limit=MAX_ROWS)
+        cell = lambda v: "" if v is None else (str(v) if len(str(v)) <= 60 else str(v)[:59] + "…")  # noqa: E731
+        table = "\n".join(["\t".join(columns), *("\t".join(cell(v) for v in row) for row in rows)])
+        self.lab.note(f"- **catalogue** `{' '.join(sql.split())}` → {len(rows)}{'+' if more else ''} rows")
+        tail = f"\n(first {MAX_ROWS} rows; there are more)" if more else ""
+        return (table + tail) if rows else "No rows."
+
+    def _count(self, args: dict[str, Any], notify: Notify) -> str:
+        _check_keys(args, ["terms", "lexicon", "where", "segments", "group_by"])
+        terms, categories, label = self._terms(args)
+        where = _text_arg(args, "where")
+        segments = _int_arg(args, "segments")
+        if segments is not None and not 2 <= segments <= 100:
+            raise ToolError("segments must be between 2 and 100.")
+        group_by = _text_arg(args, "group_by")
+        if group_by and group_by not in self.corpus.columns:
+            raise ToolError(f"There is no column {group_by!r}; the columns are {', '.join(self.corpus.columns)}.")
+        ids = self.corpus.select(where)
+        result = self.corpus.count(terms, categories, ids, segments)
+        rows = {t["id"]: t for t in self.corpus.texts(ids)}
+        table = self.lab.path("tables", f"count {label}", ".csv")
+        self._write_count(table, result, rows, categories)
+        summary = self._summarise(result, rows, categories, label, where, group_by)
+        summary += f"\nTable: {self.lab.relative(table)}"
+        self.lab.note(
+            f"- **count** {label}" + (f" where `{where}`" if where else "") + (f", {segments} segments" if segments else "")
+            + (f", by {group_by}" if group_by else "") + f" → [{self.lab.relative(table)}]({self.lab.relative(table)})\n"
+            + "\n".join(f"  > {line}" for line in summary.splitlines()[:-1])
+        )
+        return summary
+
+    def _write_count(self, path: Path, result: CountResult, rows: dict[int, dict[str, Any]], categories: list[str] | None) -> None:
+        keep = [c for c in self.corpus.columns if c not in ("id", "path", "chars")]
+        groups = list(dict.fromkeys(categories)) if categories else []
+        segments = result.segments or 0
+        header = [*keep, "hits", "per_10k", *(f"hits_{g}" for g in groups), *(f"seg_{i + 1:02d}" for i in range(segments))]
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(header)
+            for entry in sorted(result.texts, key=lambda e: e.name):
+                row = rows[entry.id]
+                per_segment = entry.words / segments if segments else 0
+                writer.writerow([
+                    *(row.get(c) for c in keep), entry.hits, round(_rate(entry.hits, entry.words), 4),
+                    *(entry.by_category.get(g, 0) for g in groups),
+                    *(round(_rate(n, per_segment), 4) if per_segment else 0 for n in entry.segments),
+                ])
+
+    def _label(self, row: dict[str, Any]) -> str:
+        details = [str(row[c]) for c in ("title", "author", "year") if row.get(c) not in (None, "")]
+        return row["name"] + (f" ({', '.join(details)})" if details else "")
+
+    def _summarise(self, result: CountResult, rows: dict[int, dict[str, Any]], categories: list[str] | None,
+                   label: str, where: str | None, group_by: str | None) -> str:
+        texts = [e for e in result.texts if e.words]
+        if not texts:
+            return f"No texts{' match ' + where if where else ''}."
+        words = sum(e.words for e in texts)
+        hits = sum(e.hits for e in texts)
+        rates = sorted(((_rate(e.hits, e.words), e) for e in texts), key=lambda pair: (pair[0], pair[1].name))
+        lines = [
+            f"Counted {label} in {len(texts):,} texts ({words:,} words){' where ' + where if where else ''}: "
+            f"{hits:,} hits; {sum(1 for e in texts if e.hits):,} texts have at least one.",
+            f"Per 10,000 words: {_fmt(_rate(hits, words))} overall; per text, median {_fmt(statistics.median(r for r, _ in rates))}, "
+            f"range {_fmt(rates[0][0])}–{_fmt(rates[-1][0])}.",
+        ]
+        if categories:
+            totals: dict[str, int] = {}
+            for entry in texts:
+                for category, n in entry.by_category.items():
+                    totals[category] = totals.get(category, 0) + n
+            ordered = sorted(totals.items(), key=lambda kv: -kv[1])
+            lines.append("By category (hits): " + " · ".join(f"{c} {n:,}" for c, n in ordered))
+        if len(result.by_term) > 1:
+            top = result.by_term.most_common(12)
+            lines.append("Commonest terms: " + " · ".join(f"{t} {n:,}" for t, n in top) + (" · …" if len(result.by_term) > 12 else ""))
+        if len(texts) > 1:
+            lines.append("Highest rates: " + " · ".join(f"{self._label(rows[e.id])} {_fmt(r)}" for r, e in rates[::-1][:8]))
+        if len(texts) > 8:
+            lines.append("Lowest rates: " + " · ".join(f"{self._label(rows[e.id])} {_fmt(r)}" for r, e in rates[:3]))
+        if result.segments:
+            means = [statistics.fmean(_rate(e.segments[i], e.words / result.segments) for e in texts) for i in range(result.segments)]
+            lines.append(f"Per segment ({result.segments} equal parts of each text; mean of the per-text rates per 10,000 words): "
+                         + " · ".join(f"{i + 1}: {_fmt(m)}" for i, m in enumerate(means)))
+        if group_by:
+            groups: dict[Any, list[Any]] = {}
+            for entry in texts:
+                groups.setdefault(rows[entry.id].get(group_by), []).append(entry)
+            order = sorted(groups, key=lambda k: (k is None, k if isinstance(k, (int, float)) else str(k)))
+            if len(order) > 30:
+                order = sorted(groups, key=lambda k: -len(groups[k]))[:30]
+            parts = []
+            for key in order:
+                members = groups[key]
+                pooled = _rate(sum(e.hits for e in members), sum(e.words for e in members))
+                mean = statistics.fmean(_rate(e.hits, e.words) for e in members)
+                parts.append(f"{key}: {_fmt(pooled)} pooled, {_fmt(mean)} mean ({len(members)} text{'' if len(members) == 1 else 's'})")
+            more = f" (the 30 largest of {len(groups)} groups)" if len(groups) > 30 else ""
+            lines.append(f"By {group_by}{more}: " + " · ".join(parts))
+        return "\n".join(lines)
+
+    def _concordance(self, args: dict[str, Any], notify: Notify) -> str:
+        _check_keys(args, ["terms", "lexicon", "where", "limit", "context"])
+        terms, _, label = self._terms(args)
+        where = _text_arg(args, "where")
+        limit = max(1, min(MAX_LINES, _int_arg(args, "limit") or 15))
+        context = max(10, min(MAX_CONTEXT, _int_arg(args, "context") or 60))
+        ids = self.corpus.select(where)
+        wanted = limit if self.budget.left else 0
+        total, lines = self.corpus.concordance(terms, ids, wanted, context)
+        shown, used = [], 0
+        for line in lines:
+            cost = len(line.left) + len(line.match) + len(line.right)
+            if cost > self.budget.left - used:
+                break
+            used += cost
+            shown.append(f"{line.text} {line.position:.0f}% [{line.offset}]: …{line.left} «{line.match}» {line.right}…")
+        self.budget.used += used
+        self.lab.note(
+            f"- **concordance** {label}" + (f" where `{where}`" if where else "")
+            + f" → {total:,} matches, {len(shown)} lines shown ({used:,} characters sent)"
+        )
+        head = f"{total:,} matches for {label}" + (f" where {where}" if where else "") + "."
+        if not shown:
+            reason = "The passage budget is used up, so no lines are shown." if total else ""
+            return f"{head} {reason}".strip()
+        return (
+            f"{head} {len(shown)} lines, spread over all of them ({used:,} characters; "
+            f"{self.budget.left:,} left in the passage budget):\n" + "\n".join(shown)
+        )
+
+    def _read(self, args: dict[str, Any], notify: Notify) -> str:
+        _check_keys(args, ["text", "start", "position", "length"])
+        name = _text_arg(args, "text", required=True) or ""
+        start = _int_arg(args, "start")
+        position = args.get("position")
+        if position is not None and (isinstance(position, bool) or not isinstance(position, (int, float))):
+            raise InvalidInput(args)
+        length = max(50, min(MAX_READ, _int_arg(args, "length") or DEFAULT_READ))
+        if not self.budget.left:
+            raise ToolError(
+                f"The passage budget for this conversation ({self.budget.limit:,} characters) is used up. Work from counts "
+                "and tables, or tell the user: they can start a new conversation or raise the budget with --passages."
+            )
+        passage = self.corpus.passage(name, start, position, min(length, self.budget.left))
+        self.budget.used += len(passage["text"])
+        where = 100 * passage["start"] / max(1, passage["chars"])
+        self.lab.note(
+            f"- **read** {passage['name']}, characters {passage['start']:,}–{passage['end']:,} ({where:.0f}%; "
+            f"{len(passage['text']):,} characters sent)"
+        )
+        return (
+            f"{passage['name']} · characters {passage['start']:,}–{passage['end']:,} of {passage['chars']:,} ({where:.0f}%) · "
+            f"{self.budget.left:,} characters left in the passage budget\n\n{passage['text']}"
+        )
+
+    def _run_python(self, args: dict[str, Any], notify: Notify) -> str:
+        _check_keys(args, ["title", "code"])
+        title = _text_arg(args, "title", required=True) or "analysis"
+        code = args.get("code")
+        if not isinstance(code, str) or not code.strip():
+            raise InvalidInput(args)
+        session = self.lab.session
+        if session is None:
+            raise ToolError("No lab folder is open.")
+        script = self.lab.path("scripts", title, ".py")
+        script.write_text(code, encoding="utf-8")
+
+        def snapshot() -> dict[Path, float]:
+            return {p: p.stat().st_mtime for p in session.rglob("*") if p.is_file() and "scripts" not in p.relative_to(session).parts}
+
+        before = snapshot()
+        run = self.sandbox.run(script, session, notify)
+        after = snapshot()
+        written = sorted(self.lab.relative(p) for p, mtime in after.items() if before.get(p) != mtime and "__pycache__" not in p.parts)
+        status = f"stopped after {run.seconds:.0f} s (too long)" if run.timed_out else f"exit code {run.exit_code}, {run.seconds:.1f} s"
+        output = clip(run.output)
+        report = (
+            f"{self.lab.relative(script)} ran ({status})."
+            + (f"\nFiles written: {', '.join(written)}" if written else "")
+            + (f"\nOutput:\n{output}" if output else "\nNo output.")
+        )
+        self.lab.note(
+            f"- **run_python** [{self.lab.relative(script)}]({self.lab.relative(script)}) ({status})"
+            + (f"; wrote {', '.join(written)}" if written else "")
+            + (f"\n\n```text\n{clip(run.output, 2000)}\n```" if output else "")
+        )
+        if run.timed_out or run.exit_code != 0:
+            raise ToolError(report)
+        return report
+
+    def _load_skill(self, args: dict[str, Any], notify: Notify) -> str:
+        _check_keys(args, ["name", "file"])
+        name = _text_arg(args, "name", required=True) or ""
+        file = _text_arg(args, "file") or "SKILL.md"
+        text = read_skill(self.skills, name, file)
+        self.lab.note(f"- **load_skill** {name}")
+        return text

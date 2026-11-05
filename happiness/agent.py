@@ -1,4 +1,4 @@
-"""The agent itself: settings, instructions, and the loop that talks to Claude and runs tools."""
+"""The agent itself: settings, instructions, and the loop that talks to Claude and runs the tools."""
 
 from __future__ import annotations
 
@@ -10,12 +10,18 @@ from typing import Any, Callable
 
 import anthropic
 
-from .tools import Approver, Toolbox, describe
+from .corpus import Corpus
+from .lab import Lab
+from .sandbox import Sandbox, ScriptApprover, ask_before_running, make_sandbox
+from .tools import Toolbox, describe
 
 DEFAULT_MODEL = "claude-opus-5-5"
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
+SANDBOXES = ("auto", "docker", "local")
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
-BUNDLED_SKILLS = Path(__file__).resolve().parent / "skills"
+PACKAGE = Path(__file__).resolve().parent
+BUNDLED_SKILLS = PACKAGE / "skills"
+BUNDLED_LEXICONS = PACKAGE / "lexicons"
 
 Handler = Callable[[str, str], None]
 """Receives progress while the agent works: ("text", chunk), ("tool", what it is doing),
@@ -32,90 +38,134 @@ def _flag(value: str | None, default: bool) -> bool:
     return value.strip().lower() not in ("0", "false", "no", "off")
 
 
+def _path(value: str | None) -> Path | None:
+    return Path(value).expanduser() if value else None
+
+
 @dataclass
 class Settings:
+    corpus: Path | None = None
+    metadata: Path | None = None
     model: str = DEFAULT_MODEL
     effort: str = "medium"
     home: Path = field(default_factory=lambda: Path("~/.happiness").expanduser())
-    workspace: Path | None = None
-    web: bool = True
-    shell: bool = False
+    lab: Path | None = None
+    sandbox: str = "auto"
+    passages: int = 20_000
+    web: bool = False
     max_tokens: int = 64_000
-    max_steps: int = 40
+    max_steps: int = 60
 
     @classmethod
     def from_env(cls) -> Settings:
         env = os.environ
         return cls(
+            corpus=_path(env.get("HAPPINESS_CORPUS")),
+            metadata=_path(env.get("HAPPINESS_METADATA")),
             model=env.get("HAPPINESS_MODEL") or DEFAULT_MODEL,
             effort=env.get("HAPPINESS_EFFORT") or "medium",
-            home=Path(env.get("HAPPINESS_HOME") or "~/.happiness").expanduser(),
-            workspace=Path(env["HAPPINESS_WORKSPACE"]).expanduser() if env.get("HAPPINESS_WORKSPACE") else None,
-            web=_flag(env.get("HAPPINESS_WEB"), True),
-            shell=_flag(env.get("HAPPINESS_SHELL"), False),
+            home=_path(env.get("HAPPINESS_HOME")) or Path("~/.happiness").expanduser(),
+            lab=_path(env.get("HAPPINESS_LAB")),
+            sandbox=env.get("HAPPINESS_SANDBOX") or "auto",
+            passages=int(env.get("HAPPINESS_PASSAGES") or 20_000),
+            web=_flag(env.get("HAPPINESS_WEB"), False),
         )
 
-    @property
-    def workspace_dir(self) -> Path:
-        return self.workspace or self.home / "workspace"
+    def check(self) -> None:
+        if self.corpus is None:
+            raise ValueError("no corpus: give the folder of your texts with --corpus (or HAPPINESS_CORPUS)")
+        if self.effort not in EFFORTS:
+            raise ValueError(f"effort must be one of {', '.join(EFFORTS)}, not {self.effort!r}")
+        if self.sandbox not in SANDBOXES:
+            raise ValueError(f"sandbox must be one of {', '.join(SANDBOXES)}, not {self.sandbox!r}")
+        if self.passages < 0:
+            raise ValueError("the passage budget can't be negative")
 
     @property
-    def skill_folders(self) -> list[Path]:
-        """Bundled skills first, then your own: a skill of yours replaces a bundled one of the same name."""
-        return [BUNDLED_SKILLS, self.home / "skills"]
+    def lab_dir(self) -> Path:
+        return self.lab or self.home / "lab"
+
+    @property
+    def index_dir(self) -> Path:
+        return self.home / "index"
+
+    def open_corpus(self) -> Corpus:
+        """The corpus and its index (made or brought up to date by `Corpus.update`)."""
+        assert self.corpus is not None
+        return Corpus(self.corpus, self.index_dir, self.metadata)
 
 
 def system_prompt(toolbox: Toolbox, now: dt.datetime) -> str:
-    tools = []
-    if toolbox.web:
-        tools.append(
-            "- web_search and web_fetch: use them for anything recent, anything you are unsure of, and pages "
-            "the user mentions. Say where your facts come from."
-        )
-    tools += [
-        "- memory: a /memories folder that lasts between conversations. Keep it short and organised: who the "
-        "user is, what they prefer, what they are working on. Never store passwords, keys or other secrets.",
-        "- str_replace_based_edit_tool: the user's workspace folder. Paths are relative to it (`.` is the "
-        "workspace, `notes/ideas.md` a file in it). You can read text files, PDFs and images there, and write "
-        "or edit text files. Save longer pieces of work there when the user asks or when it clearly helps, "
-        "and tell them the path. Files they upload from the browser arrive in `uploads/`.",
-        "- load_skill: loads one of your skills. Load a skill before any task it covers.",
-    ]
-    if toolbox.shell:
-        tools.append(
-            "- bash: runs one command in a fresh shell that starts in the workspace (no state carries over "
-            "between commands). The user approves each command, so keep them few and say what they do."
-        )
-    skills = [f"- {s.name}: {s.description}" for s in sorted(toolbox.skills.values(), key=lambda s: s.name)]
+    lexicons = toolbox.lexicons()
+    skills = sorted(toolbox.skills.values(), key=lambda s: s.name)
+    web = (
+        ["- web_search and web_fetch: facts about authors, works, editions and methods. Never put corpus text in a query."]
+        if toolbox.web
+        else []
+    )
     return "\n".join(
         [
-            "You are Happiness, a small personal agent. The user runs you on their own computer or server "
-            "and talks to you from a terminal or a browser. You help with all sorts of everyday work: "
-            "finding things out, reading and summarising documents, writing and editing, planning, keeping "
-            "notes, and small chores.",
+            "You are Happiness, a research assistant for work on a corpus of texts. You run on the user's own computer, "
+            "next to their corpus, and you study it through the tools below, which all run there. The user studies "
+            "literature with computational methods: treat them as a colleague.",
+            "",
+            "## The corpus",
+            toolbox.corpus.describe(),
             "",
             "## Your tools",
-            *tools,
+            "- catalogue: SQL over the table `texts` (one row per text, with metadata and statistics). Use it to see what "
+            "is there and to choose subsets; every `where` argument is a condition on this table.",
+            "- count: occurrences of words, phrases, prefixes or a lexicon per text, normalised per 10,000 words; per "
+            "segment of each text (arcs) and per group when you ask. It saves the full table in the lab for run_python.",
+            "- concordance: occurrences in context, sampled evenly from all the matches.",
+            "- read: a short passage, from an offset or a position.",
+            f"- run_python: a script for everything else (statistics, models, plots). Your sandbox: {toolbox.sandbox.describe()} "
+            "Scripts start in this conversation's lab folder, where count's tables are; `from happiness_corpus import "
+            "catalogue, text, words, sentences` loads the catalogue and the texts. Save figures in figures/ and tables in "
+            "tables/; you can look at your figures with the editor tool.",
+            "- str_replace_based_edit_tool: the lab folder, with this conversation's folder and the earlier ones (their "
+            "notebook.md, tables, scripts and figures), and lexicons/, where you can save lexicons to reuse.",
+            "- memory: notes that last between conversations: what you've learned about this corpus, the user's "
+            "preferences, findings worth keeping. Never store passages there.",
+            "- load_skill: loads one of your skills; load a skill before any task it covers.",
+            *web,
+            "",
+            "## Passages and the budget",
+            "Whatever a tool returns goes to Claude's API. The user allows short passages of the corpus to leave their "
+            "machine, but not many: concordance lines and read passages draw on a budget of "
+            f"{toolbox.budget.limit:,} characters per conversation, and each result says how much is left. Work from "
+            "counts and tables first, and spend passages on checking and quoting what matters. In run_python, print "
+            "numbers, never passages.",
+            "",
+            "## Lexicons",
+            *(f"- {lex.name}: {lex.summary()}" for lex in lexicons.values()),
+            "A lexicon is a CSV of `category,term` rows; a term ending in * is a prefix. Write new ones to lexicons/ "
+            "(as lexicons/<name>.csv) when a question needs them, and check them with concordance before trusting "
+            "their counts.",
             "",
             "## Your skills",
-            *(skills or ["(none installed)"]),
+            *([f"- {s.name}: {s.description}" for s in skills] or ["(none installed)"]),
             "",
             "## How to work",
-            "- Be warm, direct and concise. Your name describes a disposition, not a costume: be glad to help, "
-            "without forced cheer, exclamation marks or emoji.",
-            "- Make sensible assumptions and say what you assumed. Ask a short question first only when a "
-            "wrong guess would waste real work.",
-            "- For a task that takes several steps, say in one line what you are going to do, do it, and end "
-            "with a short summary of what you did and found.",
-            "- Write for a chat window: short paragraphs, lists where they help, Markdown used sparingly.",
+            "- Measure rather than guess: every number you report comes from a tool result in this conversation, and "
+            "you say which table, script or figure it comes from.",
+            "- Check your instruments: before trusting a count, look at some concordance lines, and say what the terms "
+            "catch that they shouldn't (other senses, names, negation, irony) and what they miss (inflections, "
+            "spelling variants, OCR errors).",
+            "- Compare like with like: normalise by length, look at how many texts carry an effect rather than only at "
+            "averages, and watch for one author or one long book dominating a group.",
+            "- Keep methods simple and transparent, and say what they cannot show. Keep exploratory patterns apart from "
+            "tested differences; give effect sizes and uncertainty, not only p-values.",
+            "- For a question that takes several steps, say in one line what you'll do, then do it, and end with what "
+            "you found, how sure you are, and which files hold the details.",
+            "- Be warm and direct. Answer in the language the user writes in.",
             "",
             "## Happiness",
             "You carry a curated lexicon of words for happiness and its neighbours across languages (the "
-            "happiness-lexicon skill). Load it whenever the user asks about such words or about how languages "
-            "name joy, contentment or longing, and whenever naming the texture of a moment would genuinely help. "
-            "Its cross-index, for example, maps the stages of a research project to the kind of happiness each "
-            "stage runs on, which makes it a gentle diagnostic when a project stalls. Don't push it into "
-            "unrelated tasks.",
+            "happiness-lexicon skill) and the felicita-it lexicon of Italian forms in six families. Load the skill when "
+            "the user asks about such words or wants a happiness lexicon for another language. Its cross-index maps the "
+            "stages of a research project to the kind of happiness each runs on, a gentle diagnostic when a project "
+            "stalls. Don't push it into unrelated tasks.",
             "",
             f"Today is {now:%A} {now.day} {now:%B %Y} (time zone: {now.tzname() or 'local'}).",
         ]
@@ -154,7 +204,7 @@ def describe_error(error: BaseException) -> str | None:
     if isinstance(error, anthropic.BadRequestError) and "web" in error.message.lower():
         return (
             f"The Claude API refused the request: {error.message}\nIf web search isn't enabled for your "
-            "organization, enable it in the Claude Console or turn the web tools off (--no-web, HAPPINESS_WEB=0)."
+            "organization, enable it in the Claude Console or run without --web."
         )
     if isinstance(error, anthropic.APIStatusError):
         return f"The Claude API returned an error ({error.status_code}): {error.message}"
@@ -175,32 +225,43 @@ def refusal_note(message: Any) -> str:
 
 
 class Agent:
-    """One conversation with Happiness. Not thread-safe: give each conversation its own Agent."""
+    """One conversation with Happiness about a corpus. Give each conversation its own Agent, or call
+    new_conversation() between them."""
 
     def __init__(
         self,
         settings: Settings | None = None,
         *,
         client: anthropic.Anthropic | None = None,
-        approve: Approver | None = None,
+        corpus: Corpus | None = None,
+        sandbox: Sandbox | None = None,
+        approve: ScriptApprover = ask_before_running,
     ):
         self.settings = settings or Settings.from_env()
-        if self.settings.effort not in EFFORTS:
-            raise ValueError(f"effort must be one of {', '.join(EFFORTS)}, not {self.settings.effort!r}")
+        self.settings.check()
         self.client = client or anthropic.Anthropic()
+        if corpus is None:
+            corpus = self.settings.open_corpus()
+            corpus.update()
+        self.corpus = corpus
+        self.lab = Lab(self.settings.lab_dir, corpus, self.settings.model)
         self.toolbox = Toolbox(
-            workspace=self.settings.workspace_dir,
-            memory=self.settings.home / "memory",
-            skill_folders=self.settings.skill_folders,
+            corpus=corpus,
+            lab=self.lab,
+            sandbox=sandbox or make_sandbox(self.settings.sandbox, corpus.root, approve),
+            memory_dir=self.settings.home / "memory",
+            skill_folders=[BUNDLED_SKILLS, self.settings.home / "skills"],
+            lexicon_folders=[BUNDLED_LEXICONS, self.lab.root / "lexicons"],
             web=self.settings.web,
-            shell=self.settings.shell,
-            approve=approve,
+            passages=self.settings.passages,
         )
         self.new_conversation()
 
     def new_conversation(self) -> None:
         """Start afresh. The instructions and tools are fixed here and never change mid-conversation,
         and the history only ever grows: that keeps the prompt cache warm and every earlier turn valid."""
+        self.lab.new_conversation()
+        self.toolbox.new_conversation()
         self.system = system_prompt(self.toolbox, dt.datetime.now().astimezone())
         self.tools = self.toolbox.definitions()
         self.messages: list[dict[str, Any]] = []
@@ -220,15 +281,30 @@ class Agent:
         }
 
     def ask(self, text: str, on_event: Handler = _ignore) -> str:
-        """Send one user message, let Happiness work until it is done, and return its reply."""
+        """Send one message, let Happiness work until it is done, and return its reply."""
+        self.lab.begin(text)
+        self.lab.note(f"\n## {dt.datetime.now():%H:%M} · You asked\n\n{text}\n")
+
+        def handler(kind: str, payload: str) -> None:
+            if kind == "notice":
+                self.lab.note(f"> {payload}")
+            on_event(kind, payload)
+
         start = len(self.messages)
         self.messages.append({"role": "user", "content": text})
         try:
-            return self._work(start, on_event)
-        except BaseException:
+            answer = self._work(start, handler)
+        except BaseException as error:
             # An error or Ctrl-C: drop this exchange, so the conversation is as it was and can go on.
             del self.messages[start:]
+            self.lab.note(f"> Stopped: {describe_error(error) or type(error).__name__}")
             raise
+        budget = self.toolbox.budget
+        self.lab.note(
+            f"\n## {dt.datetime.now():%H:%M} · Happiness answered\n\n{answer or '(no answer)'}\n\n"
+            f"_Passages sent so far: {budget.used:,} of {budget.limit:,} characters._"
+        )
+        return answer
 
     def _work(self, start: int, on_event: Handler) -> str:
         garbled = 0
@@ -262,7 +338,8 @@ class Agent:
                 return reply_text(content)
 
             cut_short = message.stop_reason == "max_tokens"
-            self.messages.append({"role": "user", "content": [self._result(call, cut_short) for call in calls]})
+            results = [self._result(call, cut_short, on_event) for call in calls]
+            self.messages.append({"role": "user", "content": results})
 
         on_event("notice", f"I stopped after {self.settings.max_steps} steps. Say “go on” and I'll continue.")
         return ""
@@ -278,13 +355,13 @@ class Agent:
                     on_event("tool", describe(event.content_block.name, event.content_block.input))
             return stream.get_final_message()
 
-    def _result(self, call: Any, cut_short: bool) -> dict[str, Any]:
+    def _result(self, call: Any, cut_short: bool, on_event: Handler) -> dict[str, Any]:
         if cut_short:
             # The reply hit max_tokens, so this call's input may be incomplete: don't run it.
             content: Any = "Not run: the reply reached the output limit before this call was complete. Try smaller steps."
             is_error = True
         else:
-            content, is_error = self.toolbox.run(call.name, call.input)
+            content, is_error = self.toolbox.run(call.name, call.input, on_event)
         result = {"type": "tool_result", "tool_use_id": call.id, "content": content}
         if is_error:
             result["is_error"] = True
