@@ -22,8 +22,7 @@ Le soluzioni commentate sono nella cartella `solutions/`.
 
 ## Giochi in classe
 
-Due piccoli giochi da aprire con il telefono, inquadrando il QR code. Girano tutti nel browser: niente account, niente server, niente dati inviati.
-
+Due piccoli giochi da aprire con il telefono, inquadrando il QR code. Girano tutti nel browser.
 | Lezione | Gioco | Che cosa si fa | Slide con il QR |
 |---|---|---|---|
 | 5 nov. · alberi | [Sei tu l'albero di decisione](https://yuri-bizzoni.github.io/yuribizzoni/ml-humanities/gioco/) | Collodi o Manzoni? Costruisci una regola con una soglia; il capitolo più felice di Pinocchio | `slides/Slide_QR_gioco.pptx` |
@@ -44,7 +43,7 @@ pip install -r requirements.txt
 jupyter notebook
 ```
 
-La cella di preparazione trova da sola la cartella `data/`, quindi non serve internet.
+La cella di preparazione trova da sola la cartella `data/`.
 
 ## Struttura
 
