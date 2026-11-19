@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PENPAL · Laboratorio di lettura</title>
+<style>:root {
+  color-scheme: light;
+  --ink: #222b24;
+  --muted: #545d50;
+  --paper: #f8f6ee;
+  --white: #fffefa;
+  --line: #dcded0;
+  --deep: #294b39;
+  --pale: #e5ecdf;
+  --gold: #f1da8b;
+  --error: #9b392f;
+  font-family: "DM Sans", "Segoe UI", system-ui, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  line-height: 1.55;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input, textarea { font: inherit; }
+button, a, textarea, input { -webkit-tap-highlight-color: transparent; }
+button { cursor: pointer; }
+a { color: var(--deep); text-underline-offset: .18em; }
+[hidden] { display: none !important; }
+:focus-visible { outline: 3px solid #9a6a19; outline-offset: 3px; }
+.page { width: min(1136px, calc(100% - 64px)); margin-inline: auto; }
+.masthead { display: flex; justify-content: space-between; align-items: center; gap: 16px; min-height: 77px; border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--deep); font-weight: 800; font-size: .94rem; letter-spacing: .13em; }
+.mark { display: inline-block; width: 19px; height: 19px; border: 1px solid #785e21; border-radius: 50%; background: var(--gold); box-shadow: inset 0 0 0 4px var(--paper); flex: none; }
+.badge { background: var(--pale); color: var(--deep); padding: 5px 11px; border-radius: 20px; font-size: .82rem; font-weight: 650; white-space: nowrap; }
+.hero { padding: 36px 0 24px; }
+.hero h1 { margin: 0 0 6px; font-family: "Instrument Serif", Georgia, serif; font-size: clamp(2.35rem, 5.35vw, 4.33rem); letter-spacing: -.047em; line-height: 1.02; font-weight: 500; }
+.hero p { margin: 12px 0 0; color: var(--muted); max-width: 70ch; }
+.progress { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin: 0 0 14px; padding: 0; list-style: none; }
+.progress button { width: 100%; min-height: 44px; text-align: left; border: 0; border-top: 3px solid var(--line); border-radius: 0; background: transparent; color: var(--muted); padding: 6px 0; font-weight: 650; font-size: .86rem; }
+.progress button[aria-current="step"] { border-color: var(--deep); color: var(--deep); }
+.progress button[data-done="true"]:not([aria-current]) { border-color: #8ca083; }
+.progress button:disabled { cursor: default; }
+.columns { display: grid; grid-template-columns: minmax(0, .94fr) minmax(0, 1.06fr); gap: 20px; align-items: start; }
+.card { min-width: 0; padding: clamp(19px, 2.5vw, 30px); border: 1px solid var(--line); border-radius: 17px; background: var(--white); }
+.reading { background: #f0eee1; border-color: #dedbcb; position: sticky; top: 16px; }
+.kicker { margin: 0 0 12px; color: var(--deep); font-weight: 800; font-size: .75rem; letter-spacing: .115em; text-transform: uppercase; }
+.reading blockquote, .key-excerpt { margin: 0; font-family: "Instrument Serif", Georgia, serif; font-size: clamp(1.27rem, 2.42vw, 1.75rem); line-height: 1.52; }
+.reading .hint { margin: 21px 0 0; padding-top: 13px; border-top: 1px solid #dcd7c3; }
+.hint, .fine { color: var(--muted); font-size: .88rem; }
+h2, h3 { line-height: 1.25; margin: 0 0 12px; }
+h2 { font-size: 1.37rem; letter-spacing: -.03em; }
+h3 { font-size: 1.09rem; }
+fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+legend, .label { font-weight: 700; padding: 0; }
+.labels { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 9px; }
+.option { display: block; position: relative; min-width: 0; }
+.option input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.option span { display: grid; place-items: center; min-height: 41px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); text-align: center; font-weight: 650; cursor: pointer; background: var(--white); }
+.option:hover span { border-color: #8ca083; background: #f4f7f0; }
+.option input:checked + span { background: var(--pale); border-color: var(--deep); color: var(--deep); box-shadow: inset 0 0 0 1px var(--deep); }
+.option input:focus-visible + span { outline: 3px solid #9a6a19; outline-offset: 2px; }
+.evidence { margin: 15px 0 11px; }
+.evidence label { display: block; margin-bottom: 6px; }
+textarea, input[type="text"] { display: block; width: 100%; color: var(--ink); border-radius: 8px; border: 1px solid #a8ae9e; background: var(--white); padding: 8px 11px; }
+textarea { resize: vertical; min-height: 62px; }
+.evidence p { margin: 4px 0 0; }
+.rating-head { border-top: 1px solid var(--line); padding-top: 12px; display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 5px; }
+.rating { position: relative; min-height: 44px; margin-block: 2px; }
+.rating legend { position: absolute; inset-inline-start: 0; top: 8px; font-size: .96rem; }
+.numbers { width: min(100%, 226px); margin-left: auto; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }
+.numbers .option span { padding: 4px 0; min-height: 38px; font-variant-numeric: tabular-nums; }
+.actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.actions.start { justify-content: flex-start; }
+.button { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; gap: 7px; background: var(--deep); border: 1px solid var(--deep); border-radius: 9px; color: #fffefa; font-weight: 700; padding: 8px 15px; text-align: center; }
+.button:hover { background: #1e3c2b; }
+.button.secondary { color: var(--deep); background: var(--white); border-color: #a4ad9e; }
+.button.secondary:hover { background: var(--pale); }
+.button:disabled { opacity: .55; cursor: default; }
+.error { color: var(--error); font-weight: 650; margin: 9px 0 0; font-size: .9rem; }
+footer { color: var(--muted); font-size: .8rem; padding: 20px 0 23px; }
+.finished { max-width: 780px; }
+.finished h2 { font-size: clamp(1.7rem, 4vw, 2.1rem); }
+.finished p { margin: 0 0 14px; }
+#alias { max-width: 270px; margin-top: 6px; }
+#copy-fallback { overflow-wrap: anywhere; margin-bottom: 14px; }
+#copy-fallback textarea { min-height: 78px; margin-top: 6px; }
+#student-status, #teacher-status { min-height: 1.4em; margin: 9px 0 0; }
+.timeline { list-style: none; display: grid; grid-template-columns: .95fr 1.25fr 1fr; padding: 0; gap: 12px; margin: 0 0 18px; }
+.timeline li { min-width: 0; padding: 13px 15px; border: 1px solid var(--line); border-radius: 12px; background: #eeece0; }
+.timeline time { display: block; font-size: .8rem; color: var(--deep); font-weight: 800; margin-bottom: 3px; }
+.timeline h2 { margin-bottom: 4px; font-size: 1.03rem; }
+.timeline p, .teacher-card p, .key p { margin: 0; }
+.teacher-columns { grid-template-columns: minmax(0, .78fr) minmax(0, 1.22fr); margin-bottom: 18px; }
+.teacher-card label { display: block; margin: 12px 0 5px; }
+.teacher-card textarea { min-height: 105px; font-size: .93rem; }
+.file-input { width: 100%; font-size: .9rem; }
+.file-input::file-selector-button { font: inherit; border: 1px solid #a4ad9e; color: var(--deep); background: var(--white); border-radius: 8px; padding: 6px 9px; margin-right: 7px; cursor: pointer; }
+#class-total { font-weight: 750; color: var(--deep); }
+.class-results { display: grid; gap: 12px; margin-top: 12px; }
+.result { padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.result h3 { margin: 0 0 8px; display: flex; align-items: center; justify-content: space-between; gap: 7px; }
+.result h3 small { font-weight: 550; color: var(--muted); font-size: .79rem; }
+.distribution { display: grid; gap: 5px; }
+.distribution div { display: grid; grid-template-columns: 73px 1fr 22px; gap: 8px; align-items: center; font-size: .82rem; }
+.distribution meter { display: block; appearance: none; width: 100%; height: 9px; }
+meter::-webkit-meter-bar { background: #e7e9df; border: 0; border-radius: 12px; }
+meter::-webkit-meter-optimum-value { background: #476b53; border-radius: 12px; }
+meter::-moz-meter-bar { background: #476b53; border-radius: 12px; }
+.result .fine { margin: 9px 0 0; }
+details.key { margin-bottom: 12px; }
+details.key summary { font-weight: 800; cursor: pointer; color: var(--deep); }
+details.key[open] summary { margin-bottom: 12px; }
+.key-review { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; margin-top: 14px; }
+.key-review article { border-top: 2px solid #a5b39e; padding-top: 9px; }
+.key-review h3 { margin-bottom: 7px; }
+.key-review p + p { margin-top: 7px; }
+.teacher-link { display: inline-block; margin-top: 12px; font-size: .92rem; }
+@media (max-width: 820px) {
+  .page { width: min(620px, calc(100% - 36px)); }
+  .masthead { min-height: 61px; }
+  .hero { padding: 24px 0 17px; }
+  .columns { grid-template-columns: minmax(0, 1fr); gap: 13px; }
+  .reading { position: static; }
+  .key-review { grid-template-columns: 1fr; }
+}
+@media (max-width: 450px) {
+  .timeline { grid-template-columns: 1fr; gap: 6px; }
+  .timeline li { padding: 8px 12px; }
+  .numbers { width: 53%; }
+  .rating legend { font-size: .88rem; }
+  .actions .button { flex: 0 1 auto; }
+}
+@media print {
+  :root { background: #fff; }
+  .hero { padding: 16px 0; }
+  button, .teacher-card, footer { display: none !important; }
+  .page { width: 100%; }
+  .card { break-inside: avoid; }
+}
+
+.evidence-list { margin-top: 7px; font-size: .89rem; }
+.evidence-list summary { color: var(--deep); cursor: pointer; }
+.evidence-list ul { margin: 5px 0 0; padding-inline-start: 19px; overflow-wrap: anywhere; }
+.evidence-list li + li { margin-top: 5px; }
+
+.start-card { max-width: 580px; }
+.start-card p { margin: 0 0 16px; color: var(--muted); }
+.form-picker { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
+.form-picker button { min-height: 49px; font-size: 1.1rem; }
+.study-progress { display: flex; align-items: center; gap: 14px; padding: 0 0 15px; color: var(--muted); font-size: .9rem; font-weight: 700; }
+.study-progress progress { flex: 1; display: block; height: 8px; border: none; border-radius: 10px; background: var(--pale); accent-color: var(--deep); }
+progress::-webkit-progress-bar { background: var(--pale); border-radius: 10px; }
+progress::-webkit-progress-value { background: var(--deep); border-radius: 10px; }
+progress::-moz-progress-bar { background: var(--deep); border-radius: 10px; }
+.rating-head.scale-header { border: 0; padding: 0; margin-bottom: 10px; }
+.rating-head h2 { margin-bottom: 0; }
+.rating .option span { min-height: 42px; }
+.ai-question { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 11px; }
+.next { margin-inline-start: auto; }
+.text-button { padding: 6px 0; border: 0; background: transparent; color: var(--deep); text-decoration: underline; text-underline-offset: .16em; }
+.form-counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.count-cell { padding: 8px 10px; background: #eeece0; border-radius: 8px; display: flex; flex-direction: column; gap: 1px; }
+.count-cell strong { color: var(--deep); font-variant-numeric: tabular-nums; }
+.count-cell small { display: block; font-size: .78rem; color: var(--muted); }
+.condition-counts { grid-template-columns: repeat(3, minmax(0,1fr)); margin-block: 12px; }
+.analysis-panel { margin-bottom: 16px; }
+.analysis-panel > p { margin-top: 0; }
+.blank { margin-bottom: 0; color: var(--muted); padding: 14px 16px; background: var(--pale); border-radius: 8px; }
+.analysis-layout { display: grid; grid-template-columns: minmax(0, 1.03fr) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 15px; }
+.matrix-wrap { min-width: 0; overflow-x: auto; }
+.data-table { width: 100%; border-collapse: collapse; text-align: left; font-variant-numeric: tabular-nums; }
+.data-table :is(th, td) { border-bottom: 1px solid var(--line); padding: 7px 9px; font-size: .9rem; }
+.data-table thead th { color: var(--deep); font-size: .78rem; font-weight: 750; }
+.data-table tr:last-child td { border-bottom: 0; }
+.data-table td:last-child, .data-table th:last-child { padding-right: 5px; }
+.matrix td { min-width: 54px; padding: 3px; text-align: center; }
+.matrix th[scope="row"] { padding-inline-start: 0; font-weight: 650; white-space: nowrap; }
+.matrix th[scope="col"] { padding-inline: 3px; text-align: center; }
+.matrix-cell { border: 1px solid transparent; border-radius: 6px; min-height: 37px; width: 100%; font-size: .9rem; font-weight: 750; color: var(--ink); background: var(--tile, #f2f1ed); font-variant-numeric: tabular-nums; }
+.matrix-cell[aria-pressed="true"] { border-color: var(--deep); box-shadow: inset 0 0 0 1px var(--deep); }
+.matrix-cell:hover { border-color: var(--deep); }
+#scatter-title { margin-bottom: 5px; }
+#correlation-note, #point-note { margin: 0 0 10px; }
+.scatter-frame { padding: 3px 14px 6px 33px; position: relative; }
+.ylabel, .xlabel { display: block; color: var(--muted); font-size: .8rem; font-weight: 650; }
+.ylabel { margin: 0 0 6px -26px; }
+.xlabel { text-align: right; margin: 22px -9px 0 0; }
+.scatter { position: relative; height: 190px; border: solid #777e6e; border-width: 0 0 1px 1px; background-image: linear-gradient(to top, transparent calc(100% - 1px), #ebebe2 0), linear-gradient(to right, transparent calc(100% - 1px), #ebebe2 0); background-size: 25% 25%; }
+.tick { position: absolute; color: var(--muted); font-size: .71rem; white-space: nowrap; }
+.tick-x { top: 100%; transform: translate(-50%, 3px); }
+.tick-y { right: 100%; transform: translate(-5px, -50%); }
+.dot { position: absolute; width: 16px; height: 16px; border: 2px solid var(--white); border-radius: 50%; background: #4b7455; transform: translate(-50%, -50%); padding: 0; }
+.dot:hover, .dot[aria-pressed="true"] { z-index: 2; width: 20px; height: 20px; background: #7b4d12; }
+.key p + p { margin-top: .6em; }
+@media (max-width: 880px) { .analysis-layout { grid-template-columns: 1fr; } }
+@media (max-width: 540px) {
+  .rating legend { position: static; font-size: .94rem; margin-bottom: 4px; }
+  .rating .numbers { width: 100%; margin: 0 0 6px; }
+  .matrix th[scope="col"] { font-size: .68rem; }
+  .matrix td { min-width: 46px; }
+  .data-table :is(th,td) { padding-inline: 5px; }
+}
+
+</style>
+</head>
+<body>
+<header class="masthead page">
+  <div class="brand"><span class="mark" aria-hidden="true"></span>PENPAL</div>
+  <span class="badge">Scheda individuale</span>
+</header>
+<main class="page">
+  <div class="hero">
+    <h1>Laboratorio di lettura</h1>
+    <p>Nove brevi estratti in inglese. Per ciascuno, dai tre voti e indica se secondo te ha contribuito l’IA.</p>
+  </div>
+  <section class="card start-card" id="start" aria-labelledby="start-title">
+    <h2 id="start-title" tabindex="-1">Quale scheda ti è stata assegnata?</h2>
+    <p>Seleziona la lettera che ti ha indicato il docente. Hai circa 11 minuti.</p>
+    <div class="form-picker" aria-label="Lettera assegnata">
+      <button class="button secondary" type="button" data-form="A">A</button>
+      <button class="button secondary" type="button" data-form="B">B</button>
+      <button class="button secondary" type="button" data-form="C">C</button>
+      <button class="button secondary" type="button" data-form="D">D</button>
+    </div>
+  </section>
+  <section id="exercise" hidden aria-label="Valutazione degli estratti">
+    <div class="study-progress">
+      <span id="progress-label"></span>
+      <progress id="progress" max="9" value="0" aria-label="Estratti completati"></progress>
+      <span id="study-form" class="badge"></span>
+    </div>
+    <div class="columns">
+      <section class="card reading" aria-labelledby="excerpt-label">
+        <h2 class="kicker" id="excerpt-label" tabindex="-1"></h2>
+        <blockquote id="excerpt-text" lang="en"></blockquote>
+      </section>
+      <form id="annotation" class="card" novalidate>
+        <div class="rating-head scale-header">
+          <h2>La tua lettura</h2>
+          <span class="hint" id="rating-scale">1 per niente · 5 moltissimo</span>
+        </div>
+        <div id="ratings"></div>
+        <fieldset class="ai-question">
+          <legend>Secondo te, l’IA ha contribuito a scrivere il testo?</legend>
+          <div class="labels">
+            <label class="option"><input type="radio" name="ai" value="1"><span>Sì</span></label>
+            <label class="option"><input type="radio" name="ai" value="0"><span>No</span></label>
+          </div>
+        </fieldset>
+        <p id="form-error" class="error" role="alert" hidden></p>
+        <div class="actions">
+          <button class="button secondary" id="previous" type="button" hidden>Indietro</button>
+          <button class="button next" id="next" type="submit">Avanti →</button>
+        </div>
+      </form>
+    </div>
+  </section>
+  <section class="card finished" id="finished" hidden aria-labelledby="finished-title">
+    <h2 id="finished-title" tabindex="-1">Nove estratti valutati</h2>
+    <p>Consegna il codice nel canale indicato dal docente oppure invia il file di risposte.</p>
+    <div class="actions start">
+      <button class="button" type="button" id="copy">Copia risposte</button>
+      <button class="button secondary" type="button" id="download">Scarica risposte</button>
+      <button class="button secondary" type="button" id="review">Rivedi i voti</button>
+    </div>
+    <p id="student-status" class="fine" aria-live="polite"></p>
+    <div id="copy-fallback" hidden>
+      <label class="label" for="manual-code">Codice da copiare</label>
+      <textarea id="manual-code" rows="3" readonly></textarea>
+    </div>
+    <button class="text-button" type="button" id="restart">Inizia una nuova scheda</button>
+  </section>
+  <noscript><p>Per annotare, scarica il file e aprilo in un browser con JavaScript attivo.</p></noscript>
+</main>
+<footer class="page">PENPAL · Estratti da racconti scritti a quattro mani</footer>
+<script>window.penpalStudyExcerpts = [{"id":"132","text":"She filled with joy and the bunny seemed to lighten up as well. The creatures landed on the bunny\u0027s paw and placed its little hands, a small glow of gold appeared and the bunny jumped out of her hands onto the grassy bank. She stood in disbelief, it was real magic! The bunny jumped around as if nothing has ever happened to its paw."},{"id":"176","text":"Lila’s heart ached with the weight of the decision. She looked around at her fairy friends playing in the sunbeams, their laughter reminded her of some children in the community. Sometimes a mysterious illness would appear in Wonderland, causing much sorrow and pain. Lila realized that perhaps her first wish could be used to heal all the sick children in Wonderland, ensuring their happiness and health."},{"id":"161","text":"In that moment, every villager felt a quiet comfort settle in their bones. Children huddled close to parents, and old Marta smiled, her hand still resting on the bark. Someone began to sing a soft, familiar melody, and soon others joined in, filling the air with voices woven together like the roots beneath their feet. The old oak seemed to sigh contentedly, leaves shimmering in the lantern light."},{"id":"242","text":"So Carl began practicing with his one remaining hand. Every day he got a little bit faster, but there was a long way to go to reach his goal. He was getting somewhat closer to his peers and was starting to become happy again. Maybe he didn\u0027t need to be the best."},{"id":"228","text":"The girl smiled softly and said \u0022hi.\u0022 Stammering, Lucy returned the greeting. \u0022I\u0027m Lea,\u0022 the girl told her. \u0022Lea,\u0022 Lucy repeated. She wanted to keep saying the name, as if the sound of it was music to her ears, and Lea\u0027s smile grew wider, her eyes crinkling at the corners, and she asked, \u0022what brings you here?\u0022 \u0022I\u0027m just a traveler passing through,\u0022 Lucy responded."},{"id":"3","text":"The roots had indeed wound themselves into a desperate tangle, pale and compressed like thoughts left too long unspoken. As she gently teased them apart, transferring the plant to a larger ceramic pot, the relief that flooded through her felt oddly secondhand—as if the gratitude wasn\u0027t her own but borrowed from something green and growing."},{"id":"138","text":"They were running down the street together, and Skittle saw a sight that made him so happy! The old lady was right there with a searching poster in her hands. The dog barked again, getting the lady\u0027s attention. When she saw the two, she smiled widely and knelt down patting Skittles\u0027 head. Skittles had never felt so relieved."},{"id":"87","text":"The seams were uneven, and the colors clashed. However, Aurelia appreciated the effort and laughed, pointing out that the dress could become a new trend—a trend of ugly dresses! Although Aurelia meant well with the comment, the squirrel took a large offense to her joke. Nutty had tried her best, and yet Aurelia was laughing at her."},{"id":"158","text":"Mira laughed—a brittle sound that surprised them both. \u0022And tell them what exactly? That I\u0027ve been robbed of something that shouldn\u0027t exist in the first place?\u0022 She dumped the glass into the trash with a sharp clatter. But even as she spoke, Mira felt the wrongness settling deeper into her bones."},{"id":"235","text":"Everybody had gathered down at Le Coq for \u0022Mad og Fad\u0022 where people get a beer and a plate of food. Everybody was so excited for what was going to be a long evening with lots of miscellaneous activities. Everyone met up at exactly 18 o\u0027clock and greeted everyone happy to celebrate the start of the feast."},{"id":"208","text":"She turned to her husband, Hansel, and they both knew it was just right. They drove home with the new pair of skis in their BMW, ready for next time the mountains called their names. As they journeyed along the winding roads, Hansel commented, “I can already picture you flying down those slopes.” Frida smiled, feeling nervous and excited."},{"id":"20","text":"As he spoke, the pocket watch began to play—a tune sweet and familiar to Tessa, echoing memories of laughter and love. Tears sparkled in her eyes as the melody wrapped around her like a long-lost embrace. Mister Corvus smiled gently and said, “Your father’s music will always guide you, Tessa, whenever you are brave enough to listen.”"},{"id":"254","text":"Let me go and don\u0027t come back! I\u0027m done with you. It was very silent when she had closed the door. He didn\u0027t knock. But this time she is relaxed and satisfied. She never felt this much relief as she is feeling it now. Now another life is about to begin. A few days passed by, and there was no sight of the ex."},{"id":"229","text":"As she grew older, Dana found herself navigating the landscape of happiness and self-worth. She had so many choices. The world was really at her feet. She could travel, do her master\u0027s in Australia and she had met so many interesting people along the way. Each encounter seemed to open new doors, and Dana relished the feeling of endless possibilities."},{"id":"163","text":"Suddenly, the shapes took on solidity—revealing old townsfolk from forgotten photographs, faces both haunting and kind. Their secrets, bound to the shimmering sky, filled the air as gentle voices whispered: “Thank you, Eli. You remembered.” The figures smiled, their forms growing brighter until they became part of the light itself. The green glow dimmed, returning the sky to midnight blue."},{"id":"236","text":"The rest of the students stood around chanting the IPA chart. They got louder and louder. The remaining two pushed and pushed. The light started flickering, then turned purple with a bright flash. The air in the room suddenly went dark. But the two kept going all the way to 100. They were celebrated for winning, but the math students also did surprisingly well."},{"id":"220","text":"But the little woman missed painting with her tongue. She loved spending time alone in the forest painting the leaves and flowers with vibrant colors, leaving trails of beauty wherever she went. It was her secret joy, a way to connect with nature on a deeper level. As the time passed she got so popular for her healing powers that she didn\u0027t get a single moment for herself."},{"id":"9","text":"Rosie hesitated for a moment, then smiled gratefully. \u0022That would be wonderful, thank you, Oliver!\u0022 She followed him up the gnarled trunk, her paws finding footholds among the rough bark. Once they reached the nest, Rosie curled up in the soft lining of leaves and twigs. The warmth was a delightful contrast to the cool, damp air outside."}];</script>
+<script>(() => {
+  'use strict';
+  const excerpts = window.penpalStudyExcerpts;
+  const fields = {
+    originality: 'Originalità',
+    quality: 'Qualità',
+    enjoyment: 'Gradimento',
+    ai: 'IA percepita'
+  };
+  const blocks = { A: [0, 1, 2], B: [0, 3, 4], C: [1, 3, 5], D: [2, 4, 5] };
+  const ids = form => blocks[form].flatMap(i => excerpts.slice(3 * i, 3 * i + 3).map(item => item.id));
+  const code = index => 'E' + String(index + 1).padStart(2, '0');
+  window.PenpalStudy = { excerpts, fields, blocks, ids, code };
+})();
+
+</script>
+<script>(() => {
+  'use strict';
+
+  const prefix = 'PENPAL2.';
+  const responseCount = 9;
+  const formIds = new Set(['A', 'B', 'C', 'D']);
+  const conditions = new Set(['HH', 'H-LLM', 'LLM-LLM']);
+  const ratingFields = ['originality', 'quality', 'enjoyment'];
+  const textEncoder = new TextEncoder();
+  const textDecoder = new TextDecoder('utf-8', { fatal: true });
+
+  function validateResponse(response) {
+    if (typeof response?.excerptId !== 'string' ||
+        !/^(?:0|[1-9][0-9]{0,11})$/.test(response.excerptId)) {
+      throw new Error('Identificativo dell’estratto non valido.');
+    }
+    if (response.ai !== 0 && response.ai !== 1) {
+      throw new Error('Indica se pensi che l’IA abbia contribuito.');
+    }
+    for (const field of ratingFields) {
+      if (!Number.isInteger(response[field]) || response[field] < 1 || response[field] > 5) {
+        throw new Error('Ogni voto deve essere un numero intero da 1 a 5.');
+      }
+    }
+    return {
+      excerptId: response.excerptId,
+      originality: response.originality,
+      quality: response.quality,
+      enjoyment: response.enjoyment,
+      ai: response.ai
+    };
+  }
+
+  function makeSubmission(submission) {
+    const { sessionId, formId, responses } = submission ?? {};
+    const sessionPattern = /^(?:[a-f0-9]{24}|[0-9A-HJKMNP-TV-Z]{8,32})$/i;
+    if (typeof sessionId !== 'string' || !sessionPattern.test(sessionId)) {
+      throw new Error('Identificativo dell’annotatore non valido.');
+    }
+    if (!formIds.has(formId)) {
+      throw new Error('Scheda non valida.');
+    }
+    if (!Array.isArray(responses) || responses.length !== responseCount) {
+      throw new Error('Ogni scheda deve contenere nove annotazioni.');
+    }
+
+    const validatedResponses = Array.from(responses, validateResponse);
+    if (new Set(validatedResponses.map(response => response.excerptId)).size !== responseCount) {
+      throw new Error('La scheda contiene estratti ripetuti.');
+    }
+    return { sessionId, formId, responses: validatedResponses };
+  }
+
+  function encode(submission) {
+    const { sessionId, formId, responses } = makeSubmission(submission);
+    const items = responses.map(({ excerptId, originality, quality, enjoyment, ai }) =>
+      [excerptId, originality, quality, enjoyment, ai]
+    );
+    const bytes = textEncoder.encode(JSON.stringify([sessionId, formId, items]));
+    const base64 = btoa(String.fromCharCode(...bytes));
+    return prefix + base64.replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+  }
+
+  function decode(code) {
+    try {
+      if (typeof code !== 'string' || code.length > 2048) throw new Error();
+      const prepared = code.trim();
+      if (!prepared.startsWith(prefix)) throw new Error();
+      const encoded = prepared.slice(prefix.length);
+      if (!/^[A-Za-z0-9_-]+$/.test(encoded)) throw new Error();
+      const bytes = atob(encoded.replaceAll('-', '+').replaceAll('_', '/'));
+      const tuple = JSON.parse(textDecoder.decode(Uint8Array.from(bytes, char => char.charCodeAt(0))));
+      if (!Array.isArray(tuple) || tuple.length !== 3 || !Array.isArray(tuple[2])) throw new Error();
+      const [sessionId, formId, items] = tuple;
+      const responses = items.map(item => {
+        if (!Array.isArray(item) || item.length !== 5) throw new Error();
+        const [excerptId, originality, quality, enjoyment, ai] = item;
+        return { excerptId, originality, quality, enjoyment, ai };
+      });
+      return makeSubmission({ sessionId, formId, responses });
+    } catch {
+      throw new Error('Codice PENPAL non valido.');
+    }
+  }
+
+  function csvCell(value) {
+    if (typeof value === 'number') return String(value);
+    return '"' + value.replaceAll('"', '""') + '"';
+  }
+
+  function csv(submissions, conditionsById) {
+    const latest = new Map();
+    for (const item of submissions) {
+      const parsed = makeSubmission(item);
+      latest.set(parsed.sessionId.toLowerCase(), parsed);
+    }
+
+    const rows = [[
+      'annotatore', 'scheda', 'estratto', 'posizione', 'originalità', 'qualità', 'gradimento',
+      'IA percepita', 'condizione', 'IA nella scrittura'
+    ]];
+    for (const [key, { formId, responses }] of latest) {
+      for (const [position, response] of responses.entries()) {
+        const { excerptId, originality, quality, enjoyment, ai } = response;
+        const condition = Object.hasOwn(conditionsById, excerptId) ? conditionsById[excerptId] : null;
+        if (!conditions.has(condition)) {
+          throw new Error('Condizione di scrittura mancante per l’estratto ' + excerptId + '.');
+        }
+        // A fixed prefix preserves identifiers that Excel could parse as large numbers.
+        rows.push([
+          'p-' + key, formId, Number(excerptId), position + 1, originality, quality, enjoyment,
+          ai ? 'Sì' : 'No', condition, condition === 'HH' ? 'No' : 'Sì'
+        ]);
+      }
+    }
+    return '\uFEFF' + rows.map(row => row.map(csvCell).join(';')).join('\r\n') + '\r\n';
+  }
+
+  function download(filename, content, mime = 'text/plain;charset=utf-8') {
+    const url = URL.createObjectURL(new Blob([content], { type: mime }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  globalThis.PenpalStudyExchange = Object.freeze({ makeSubmission, encode, decode, csv, download });
+})();
+</script>
+<script>(() => {
+  'use strict';
+
+  const study = PenpalStudy;
+  const exchange = PenpalStudyExchange;
+  const get = id => document.getElementById(id);
+  const form = get('annotation');
+  const ratingFields = [
+    ['originality', 'Quanto è originale?'],
+    ['quality', 'Quanto è ben scritto?'],
+    ['enjoyment', 'Quanto ti piace?']
+  ];
+  const storageKey = 'penpal-studio-felicita-studente-v2';
+  const excerptsById = new Map(study.excerpts.map((item, index) =>
+    [item.id, { text: item.text, code: study.code(index) }]));
+  let state = load();
+  let index = state?.index ?? 0;
+
+  function load() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(storageKey));
+      if (saved && Object.hasOwn(study.blocks, saved.formId) &&
+          /^[a-f0-9]{24}$/.test(saved.sessionId) &&
+          Array.isArray(saved.order) && saved.order.length === 9 &&
+          study.ids(saved.formId).every(id => saved.order.includes(id)) &&
+          saved.drafts && Number.isInteger(saved.index) && saved.index >= 0 && saved.index <= 9) {
+        return saved;
+      }
+    } catch {
+      // The session works in memory if local storage is unavailable.
+    }
+    return null;
+  }
+
+  function save() {
+    try {
+      if (state) localStorage.setItem(storageKey, JSON.stringify(state));
+      else localStorage.removeItem(storageKey);
+    } catch {
+      // Export is available regardless of browser storage settings.
+    }
+  }
+
+  function start(formId) {
+    const order = study.ids(formId);
+    const bytes = crypto.getRandomValues(new Uint8Array(12));
+    for (let i = order.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(bytes[i] * (i + 1) / 256);
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    const sessionId = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+    state = { sessionId, formId, order, index: 0, drafts: {} };
+    render(0);
+  }
+
+  function makeRating(name, title) {
+    const fieldset = document.createElement('fieldset');
+    fieldset.className = 'rating';
+    fieldset.setAttribute('aria-describedby', 'rating-scale');
+    const legend = document.createElement('legend');
+    legend.textContent = title;
+    const numbers = document.createElement('div');
+    numbers.className = 'numbers';
+    for (let score = 1; score <= 5; score += 1) {
+      const label = document.createElement('label');
+      label.className = 'option';
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = name;
+      input.value = String(score);
+      const value = document.createElement('span');
+      value.textContent = String(score);
+      label.append(input, value);
+      numbers.append(label);
+    }
+    fieldset.append(legend, numbers);
+    get('ratings').append(fieldset);
+  }
+  ratingFields.forEach(([name, title]) => makeRating(name, title));
+
+  function missing(draft) {
+    return ratingFields.find(([key]) => !Number.isInteger(draft?.[key]) ||
+      draft[key] < 1 || draft[key] > 5)?.[0] ??
+      (draft?.ai === 0 || draft?.ai === 1 ? undefined : 'ai');
+  }
+
+  function readDraft() {
+    const data = new FormData(form);
+    const excerptId = state.order[index];
+    const draft = { excerptId };
+    for (const [field] of ratingFields) draft[field] = data.has(field) ? Number(data.get(field)) : null;
+    draft.ai = data.has('ai') ? Number(data.get('ai')) : null;
+    state.drafts[excerptId] = draft;
+    save();
+    return draft;
+  }
+
+  function showProgress() {
+    const done = state.order.filter(id => !missing(state.drafts[id])).length;
+    get('progress').value = done;
+    get('progress-label').textContent = done + ' di 9 valutati';
+  }
+
+  function render(nextIndex, focus = true) {
+    get('start').hidden = Boolean(state);
+    get('exercise').hidden = true;
+    get('finished').hidden = true;
+    if (!state) {
+      if (focus) get('start-title').focus();
+      return;
+    }
+    const firstUnfinished = state.order.findIndex(id => missing(state.drafts[id]));
+    index = firstUnfinished === -1 ? nextIndex : Math.min(firstUnfinished, nextIndex);
+    state.index = index;
+    save();
+    const finished = index === state.order.length;
+    get('exercise').hidden = finished;
+    get('finished').hidden = !finished;
+    get('form-error').hidden = true;
+    get('copy-fallback').hidden = true;
+    get('student-status').textContent = '';
+    if (finished) {
+      if (focus) get('finished-title').focus();
+      return;
+    }
+    const excerptId = state.order[index];
+    const excerpt = excerptsById.get(excerptId);
+    const draft = state.drafts[excerptId] ?? {};
+    get('excerpt-label').textContent = 'Estratto ' + (index + 1) + ' di 9';
+    get('excerpt-text').textContent = excerpt.text;
+    get('study-form').textContent = 'Scheda ' + state.formId;
+    form.reset();
+    form.querySelectorAll('input[type="radio"]').forEach(input => {
+      input.checked = String(draft[input.name]) === input.value;
+    });
+    get('previous').hidden = index === 0;
+    get('next').textContent = index === 8 ? 'Completa scheda' : 'Avanti →';
+    showProgress();
+    if (focus) get('excerpt-label').focus();
+  }
+
+  document.querySelectorAll('[data-form]').forEach(button =>
+    button.addEventListener('click', () => start(button.dataset.form)));
+
+  form.addEventListener('input', () => {
+    readDraft();
+    showProgress();
+    get('form-error').hidden = true;
+  });
+
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    const absent = missing(readDraft());
+    if (absent) {
+      get('form-error').hidden = false;
+      get('form-error').textContent = absent === 'ai' ? 'Scegli Sì o No per il contributo dell’IA.' :
+        'Aggiungi il voto per ' + study.fields[absent].toLowerCase() + '.';
+      form.elements[absent][0].focus();
+      return;
+    }
+    render(index + 1);
+  });
+
+  get('previous').addEventListener('click', () => {
+    readDraft();
+    render(index - 1);
+  });
+
+  function makeCode() {
+    return exchange.encode({
+      sessionId: state.sessionId,
+      formId: state.formId,
+      responses: state.order.map(id => state.drafts[id])
+    });
+  }
+
+  get('copy').addEventListener('click', async () => {
+    const code = makeCode();
+    try {
+      await navigator.clipboard.writeText(code);
+      get('copy-fallback').hidden = true;
+      get('student-status').textContent = 'Codice copiato.';
+    } catch {
+      get('copy-fallback').hidden = false;
+      get('manual-code').value = code;
+      get('manual-code').select();
+      get('student-status').textContent = 'Copia il codice selezionato qui sotto.';
+    }
+  });
+
+  get('download').addEventListener('click', () => {
+    exchange.download('PENPAL-risposte-' + state.sessionId.slice(0, 6) + '.txt', makeCode() + '\n');
+    get('student-status').textContent = 'File di risposte pronto.';
+  });
+
+  get('review').addEventListener('click', () => render(0));
+  get('restart').addEventListener('click', () => {
+    if (!window.confirm('Hai già consegnato? Una nuova scheda sostituirà questa sul dispositivo.')) return;
+    state = null;
+    save();
+    render(0);
+  });
+
+  render(index, false);
+})();
+
+</script>
+</body>
+</html>
+
+
